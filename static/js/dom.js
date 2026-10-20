@@ -36,7 +36,7 @@ const PANEL_TONES = {
 };
 
 const PANEL_LABELS = {
-    ok: "Live",
+    ok: "Aktif",
     success: "OK",
     empty: "Kosong",
     error: "Error",

@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import requests
 
+from config import DEFAULT_VM, VM_IDS
 from services.delay import PingRunner
 from services.iperf3 import Iperf3Runner
 from services.providers.base import MonitoringProvider
@@ -17,9 +18,25 @@ HOSTS = (
     ("fail2ban-vm", "GLANCES_FAIL2BAN_URL", "GLANCES_FAIL2BAN_LABEL"),
 )
 
+FLOW_URL_KEYS = {
+    "lightgbm-vm": "FLOW_FEATURES_LIGHTGBM_URL",
+    "randomforest-vm": "FLOW_FEATURES_RANDOM_FOREST_URL",
+    "fail2ban-vm": "FLOW_FEATURES_FAIL2BAN_URL",
+}
+
+VM_LABEL_KEYS = {
+    "lightgbm-vm": "GLANCES_LIGHTGBM_LABEL",
+    "randomforest-vm": "GLANCES_RANDOM_FOREST_LABEL",
+    "fail2ban-vm": "GLANCES_FAIL2BAN_LABEL",
+}
+
+QOS_KEYS = ("delay", "jitter", "packet_loss", "throughput")
+
 
 class LiveProvider(MonitoringProvider):
     data_mode = "live"
+    default_vm = DEFAULT_VM
+    vm_ids = VM_IDS
 
     def __init__(self, config, telegram_service):
         self.config = config
@@ -27,6 +44,9 @@ class LiveProvider(MonitoringProvider):
         self.timeout = config.get("API_TIMEOUT_SECONDS", 4)
         self.window_seconds = config.get("STATS_WINDOW_SECONDS", 300)
         self.max_points = config.get("HISTORY_MAX_POINTS", 120)
+        self.qos_vm = config.get("QOS_VM", DEFAULT_VM)
+        if self.qos_vm not in self.vm_ids:
+            self.qos_vm = DEFAULT_VM
         self.lock = threading.Lock()
         self.qos = {
             "delay": deque(maxlen=self.max_points),
@@ -43,6 +63,21 @@ class LiveProvider(MonitoringProvider):
         self.iperf_meta = None
         self.iperf_error = None
         self.delay_meta = None
+
+    def _resolve_vm(self, vm):
+        selected = vm or self.default_vm
+        if selected not in self.vm_ids:
+            raise ValueError(f"VM tidak dikenal: {selected}")
+        return selected
+
+    def _flow_url_for(self, vm):
+        specific = self.config.get(FLOW_URL_KEYS.get(vm, "")) or ""
+        if vm == "randomforest-vm":
+            return specific or self.config.get("FLOW_FEATURES_API_URL") or ""
+        return specific
+
+    def _vm_label(self, vm):
+        return str(self.config.get(VM_LABEL_KEYS.get(vm, "")) or vm)
 
     def _get_json(self, url, token=None):
         headers = {"Accept": "application/json"}
@@ -190,15 +225,18 @@ class LiveProvider(MonitoringProvider):
                         return float(nested_value)
         return None
 
-    def _load_resources(self):
+    def _load_resources(self, vm=None):
         hosts = []
         any_ok = False
         for host, config_key, label_key in HOSTS:
+            if vm is not None and host != vm:
+                continue
             label = str(self.config.get(label_key) or host)
             url = self.config.get(config_key)
             if not url:
                 hosts.append(
                     {
+                        "id": host,
                         "host": label,
                         "status": "unavailable",
                         "source": "Glances",
@@ -213,6 +251,7 @@ class LiveProvider(MonitoringProvider):
             if error:
                 hosts.append(
                     {
+                        "id": host,
                         "host": label,
                         "status": "error",
                         "source": "Glances",
@@ -237,6 +276,7 @@ class LiveProvider(MonitoringProvider):
             if cpu is None and memory is None:
                 hosts.append(
                     {
+                        "id": host,
                         "host": label,
                         "status": "error",
                         "source": "Glances",
@@ -250,6 +290,7 @@ class LiveProvider(MonitoringProvider):
             any_ok = True
             hosts.append(
                 {
+                    "id": host,
                     "host": label,
                     "status": "ok",
                     "source": "Glances",
@@ -363,14 +404,16 @@ class LiveProvider(MonitoringProvider):
             "items": items[:50],
         }
 
-    def _load_traffic(self):
-        """Build the 14-feature flow monitor from processed RF feature rows."""
-        url = self.config.get("FLOW_FEATURES_API_URL")
+    def _load_traffic(self, vm):
+        """Build the 14-feature flow monitor from processed feature rows for one VM."""
+        url = self._flow_url_for(vm)
+        label = self._vm_label(vm)
+        source = f"Flow features · {label}"
         if not url:
             return {
                 "status": "unavailable",
-                "source": "Random Forest flow features",
-                "error": "Endpoint flow features belum dikonfigurasi.",
+                "source": source,
+                "error": f"Endpoint flow features untuk {label} belum dikonfigurasi.",
                 "features": [],
             }
 
@@ -381,7 +424,7 @@ class LiveProvider(MonitoringProvider):
         if error:
             return {
                 "status": "error",
-                "source": "Random Forest flow features",
+                "source": source,
                 "error": error,
                 "features": [],
             }
@@ -390,7 +433,7 @@ class LiveProvider(MonitoringProvider):
         if not isinstance(raw_items, list):
             return {
                 "status": "error",
-                "source": "Random Forest flow features",
+                "source": source,
                 "error": "Format flow features tidak dikenali.",
                 "features": [],
             }
@@ -447,7 +490,7 @@ class LiveProvider(MonitoringProvider):
         return {
             "status": status,
             "source": (payload.get("source") if isinstance(payload, dict) else None)
-            or "Random Forest flow features",
+            or source,
             "error": None if status == "ok" else "Belum ada sampel fitur flow.",
             "feature_count": len(features),
             "sample": {
@@ -459,11 +502,17 @@ class LiveProvider(MonitoringProvider):
             "features": features,
         }
 
-    def get_overview(self):
-        self._load_iperf()
-        delay_error = self._load_delay()
+    def get_overview(self, vm=None):
+        selected = self._resolve_vm(vm)
+        qos_active = selected == self.qos_vm
 
-        series_map = self._qos_series()
+        if qos_active:
+            self._load_iperf()
+            delay_error = self._load_delay()
+            series_map = self._qos_series()
+        else:
+            delay_error = None
+            series_map = {key: [] for key in QOS_KEYS}
         qos_source = (
             "iperf3 / ICMP ping"
             if (self.iperf_runner.configured() or self.delay_runner.configured())
@@ -482,7 +531,12 @@ class LiveProvider(MonitoringProvider):
                 metrics[key] = build_metric(series, unit, qos_source)
                 continue
 
-            if key == "delay":
+            if not qos_active:
+                error = (
+                    f"QoS hanya diukur untuk {self._vm_label(self.qos_vm)}. "
+                    "Pilih VM tersebut atau tambahkan endpoint QoS khusus."
+                )
+            elif key == "delay":
                 error = delay_error or "Belum ada sampel pengukuran delay."
             elif key == "throughput":
                 error = self.iperf_error or "Belum ada sampel pengukuran iperf3."
@@ -495,11 +549,31 @@ class LiveProvider(MonitoringProvider):
             )
 
         qos_status = "ok" if any(metrics[key]["series"] for key in metrics) else "unavailable"
-        qos_error = None if qos_status == "ok" else (self.iperf_error or delay_error or "Belum ada hasil pengukuran QoS.")
+        if not qos_active:
+            qos_error = (
+                f"QoS untuk {self._vm_label(selected)} belum tersedia. "
+                f"Pengukuran aktif terikat ke {self._vm_label(self.qos_vm)}."
+            )
+        else:
+            qos_error = None if qos_status == "ok" else (
+                self.iperf_error or delay_error or "Belum ada hasil pengukuran QoS."
+            )
 
-        traffic = self._load_traffic()
+        qos_test = self.iperf_meta if qos_active else None
+        if not qos_test:
+            qos_test = {
+                "protocol": self.config.get("IPERF3_TEST_PROTOCOL", "udp").upper(),
+                "direction": "upload",
+                "client": self.config.get("IPERF3_CLIENT_HOST") or None,
+                "server": self._vm_label(self.qos_vm) if not qos_active
+                else (self.config.get("IPERF3_SERVER_HOST") or None),
+                "duration_seconds": self.config.get("IPERF3_TEST_DURATION_SECONDS"),
+                "status": "unavailable",
+                "timestamp": None,
+            }
 
-        resources = self._load_resources()
+        traffic = self._load_traffic(selected)
+        resources = self._load_resources(selected if vm is not None else None)
         blocked = self._load_blocked()
         attacks = self._load_attacks()
 
@@ -512,23 +586,15 @@ class LiveProvider(MonitoringProvider):
         }
 
         return {
+            "vm": selected,
             "traffic": traffic,
             "qos": {
                 "status": qos_status,
                 "source": qos_source,
                 "error": qos_error,
                 "metrics": metrics,
-                "test": self.iperf_meta
-                or {
-                    "protocol": self.config.get("IPERF3_TEST_PROTOCOL", "udp").upper(),
-                    "direction": "upload",
-                    "client": self.config.get("IPERF3_CLIENT_HOST") or None,
-                    "server": self.config.get("IPERF3_SERVER_HOST") or None,
-                    "duration_seconds": self.config.get("IPERF3_TEST_DURATION_SECONDS"),
-                    "status": "unavailable",
-                    "timestamp": None,
-                },
-                "delay_test": self.delay_meta,
+                "test": qos_test,
+                "delay_test": self.delay_meta if qos_active else None,
             },
             "resources": resources,
             "blocked_ips": blocked,

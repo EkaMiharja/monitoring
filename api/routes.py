@@ -1,12 +1,14 @@
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, current_app, jsonify, request
 
 from auth.decorators import login_required
+from config import VM_SPECS
 from security import csrf_protect
 from utils import iso, utc_now
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
 SECTIONS = ("traffic", "qos", "resources", "blocked_ips", "attacks", "telegram")
+VM_LABEL_KEYS = {spec["id"]: spec["label_key"] for spec in VM_SPECS}
 
 
 def _collect_errors(payload):
@@ -39,8 +41,19 @@ def _collect_errors(payload):
 @login_required
 def overview():
     provider = current_app.extensions["monitoring_provider"]
+    vm = (request.args.get("vm") or "").strip() or None
+    if vm is not None and vm not in provider.vm_ids:
+        return (
+            jsonify(
+                error="invalid_vm",
+                message=f"VM tidak dikenal: {vm}",
+                available_vms=list(provider.vm_ids),
+            ),
+            400,
+        )
+
     try:
-        payload = provider.get_overview()
+        payload = provider.get_overview(vm=vm)
     except Exception:
         current_app.logger.exception("Gagal membangun data overview")
         return (
@@ -51,6 +64,18 @@ def overview():
             500,
         )
 
+    selected = payload.get("vm") or provider.default_vm
+    qos_vm = current_app.config.get("QOS_VM") or provider.default_vm
+    if qos_vm not in provider.vm_ids:
+        qos_vm = provider.default_vm
+    payload["vm"] = {
+        "id": selected,
+        "label": current_app.config.get(VM_LABEL_KEYS.get(selected, ""), selected),
+    }
+    payload["qos_vm"] = {
+        "id": qos_vm,
+        "label": current_app.config.get(VM_LABEL_KEYS.get(qos_vm, ""), qos_vm),
+    }
     payload["generated_at"] = iso(utc_now())
     payload["data_mode"] = provider.data_mode
     payload["poll_interval_ms"] = current_app.config["POLL_INTERVAL_MS"]

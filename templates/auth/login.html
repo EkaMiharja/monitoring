@@ -6,60 +6,81 @@
 {% endblock %}
 {% block layout %}
 <main class="auth-shell" id="main">
-    <section class="auth-card">
-        <div class="auth-brand">
-            <span class="brand-mark brand-mark--lg">S</span>
-            <div>
-                <strong>{{ app_name }}</strong>
-                <span>Monitoring SSH Brute Force</span>
-            </div>
-        </div>
-
-        <header class="auth-card__head">
-            <p class="auth-card__eyebrow">Authentication</p>
-            <h1>Login</h1>
-            <p class="auth-card__text">Masuk untuk mengakses Dashboard Overview.</p>
-        </header>
-
-        {% include "_flash.html" %}
-
-        {% if errors %}
-            <div class="form-errors" role="alert">
-                <ul>
-                    {% for error in errors %}
-                        <li>{{ error }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-        {% endif %}
-
-        <form class="form" method="post" action="{{ url_for('auth.login') }}" novalidate>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="next" value="{{ next_url }}">
-
-            <div class="field">
-                <label for="username">Username</label>
-                <input id="username" name="username" type="text" autocomplete="username"
-                       value="{{ form.username }}" required minlength="3" maxlength="32"
-                       placeholder="contoh: admin">
+    <div class="auth-frame">
+        <aside class="auth-aside">
+            <div class="auth-brand">
+                <span class="brand-mark brand-mark--lg">S</span>
+                <div>
+                    <strong>{{ app_name }}</strong>
+                    <span>Monitoring SSH Brute Force</span>
+                </div>
             </div>
 
-            <div class="field">
-                <label for="password">Password</label>
-                <input id="password" name="password" type="password" autocomplete="current-password"
-                       required minlength="8" placeholder="Minimal 8 karakter">
+            <div class="auth-aside__copy">
+                <p class="auth-kicker">Access control</p>
+                <h1>Monitoring SSH brute force.</h1>
+                <p>
+                    Konsol ini menyatukan telemetri VM dan feed keamanan selama pengujian.
+                    Masuk untuk membaca snapshot terbaru.
+                </p>
             </div>
 
-            <button class="button button--primary button--block" type="submit">Login</button>
-        </form>
+            <ul class="auth-facts">
+                <li><span>Scope</span><strong>Network flow, QoS, resource VM</strong></li>
+                <li><span>Feed</span><strong>Fail2Ban, attack history, Telegram</strong></li>
+                <li><span>Mode</span><strong>{{ data_mode|upper }}</strong></li>
+            </ul>
 
-        <p class="auth-card__foot">
-            Belum punya akun? <a href="{{ url_for('auth.register') }}">Register</a>
-        </p>
+            <p class="auth-aside__foot">Akses hanya untuk akun terdaftar. Sesi berakhir otomatis.</p>
+        </aside>
 
-        {% if data_mode == 'demo' %}
-            <p class="auth-note">Mode DEMO aktif — dashboard akan menampilkan data simulasi berlabel.</p>
-        {% endif %}
-    </section>
+        <section class="auth-panel">
+            <header class="auth-panel__head">
+                <p class="auth-kicker">Authentication</p>
+                <h2>Login</h2>
+                <p>Masuk untuk mengakses Dashboard Overview.</p>
+            </header>
+
+            {% include "_flash.html" %}
+
+            {% if errors %}
+                <div class="form-errors" role="alert">
+                    <ul>
+                        {% for error in errors %}
+                            <li>{{ error }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+
+            <form class="form" method="post" action="{{ url_for('auth.login') }}" novalidate>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ next_url }}">
+
+                <div class="field">
+                    <label for="username">Username</label>
+                    <input id="username" name="username" type="text" autocomplete="username"
+                           value="{{ form.username }}" required minlength="3" maxlength="32"
+                           placeholder="contoh: admin">
+                </div>
+
+                <div class="field">
+                    <label for="password">Password</label>
+                    <input id="password" name="password" type="password" autocomplete="current-password"
+                           required minlength="8" placeholder="Minimal 8 karakter">
+                </div>
+
+                <button class="button button--primary button--block" type="submit">Login</button>
+            </form>
+
+            <p class="auth-card__foot">
+                Belum punya akun? <a href="{{ url_for('auth.register') }}">Register</a>
+            </p>
+
+            {% if data_mode == 'demo' %}
+                <p class="auth-note">Mode DEMO aktif. Dashboard menampilkan data simulasi berlabel.</p>
+            {% endif %}
+        </section>
+    </div>
 </main>
 {% endblock %}

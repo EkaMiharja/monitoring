@@ -110,7 +110,7 @@ function renderFeatureChart() {
         {
             label: feature?.name || "Fitur",
             data: points.map((point) => toNumber(point?.value)),
-            color: "#38bdf8",
+            color: "#1f3a5f",
             fill: true,
         },
     ];
@@ -190,14 +190,14 @@ function renderDemoPanel(root, section) {
         {
             label: "Inbound",
             data: series.map((point) => toNumber(point.inbound)),
-            color: "#38bdf8",
+            color: "#1f3a5f",
             fill: true,
         },
         {
             label: "Outbound",
             data: series.map((point) => toNumber(point.outbound)),
-            color: "#a78bfa",
-            fill: true,
+            color: "#7a520f",
+            fill: false,
         },
     ];
 

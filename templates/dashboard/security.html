@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Security Feed · {{ app_name }}{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+{% block styles %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+{% block layout %}
+<div class="app-shell" id="security" data-poll-interval="{{ poll_interval_ms }}">
+    {% include "dashboard/_sidebar.html" %}
+
+    <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+
+    <div class="app-main">
+        {% include "dashboard/_topbar.html" %}
+
+        <main class="content" id="main">
+            {% include "_flash.html" %}
+
+            <div class="demo-banner" id="demo-banner" role="status" {% if data_mode != 'demo' %}hidden{% endif %}>
+                <span class="badge badge--warning">DEMO</span>
+                <p><strong>Mode simulasi.</strong> Data di bawah berasal dari provider demo berlabel, bukan pengukuran live.</p>
+            </div>
+
+            <div class="global-error" id="global-error" role="alert" hidden>
+                <strong>Gagal memperbarui data.</strong>
+                <span id="global-error-message"></span>
+            </div>
+
+            <header class="page-head page-head--single">
+                <div class="page-head__copy">
+                    <p class="page-kicker">Security operations</p>
+                    <h1>Security Feed</h1>
+                </div>
+            </header>
+
+            <section class="section" aria-label="Feed keamanan global">
+                <div class="dashboard-grid security-grid">
+                    <section class="panel panel--span-5" id="panel-blocked" data-panel="blocked">
+                        <header class="panel__head">
+                            <div>
+                                <h2>Blocked IP</h2>
+                                <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                            </div>
+                            <span class="badge badge--neutral" data-status>
+                                <span class="status-dot" aria-hidden="true"></span>
+                                <span data-status-text>Menunggu</span>
+                            </span>
+                        </header>
+                        <p class="panel__error" data-section-error hidden></p>
+                        <div class="panel__body">
+                            <div class="table-wrap">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">IP Address</th>
+                                            <th scope="col">Blocked At</th>
+                                            <th scope="col">Jail</th>
+                                            <th scope="col">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody data-blocked-rows></tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" data-empty hidden>
+                                <p class="empty-state__title">Belum ada IP yang diblokir</p>
+                                <p class="empty-state__text">Daftar ini hanya memuat status yang dikonfirmasi Fail2Ban.</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="panel panel--span-7" id="panel-attacks" data-panel="attacks">
+                        <header class="panel__head">
+                            <div>
+                                <h2>Attack History</h2>
+                                <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                            </div>
+                            <span class="badge badge--neutral" data-status>
+                                <span class="status-dot" aria-hidden="true"></span>
+                                <span data-status-text>Menunggu</span>
+                            </span>
+                        </header>
+                        <p class="panel__error" data-section-error hidden></p>
+                        <div class="panel__body">
+                            <div class="panel__toolbar">
+                                <label class="sr-only" for="attack-filter">Filter attack history</label>
+                                <input class="input input--search" id="attack-filter" type="search"
+                                       placeholder="Cari IP, jenis serangan, atau model…" autocomplete="off">
+                                <span class="panel__counter" data-attack-count>0 kejadian</span>
+                            </div>
+                            <div class="table-wrap">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Waktu</th>
+                                            <th scope="col">Source IP</th>
+                                            <th scope="col">Jenis Serangan</th>
+                                            <th scope="col">Detection</th>
+                                            <th scope="col">Model</th>
+                                            <th scope="col">Blocking</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody data-attack-rows></tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" data-empty hidden>
+                                <p class="empty-state__title">Belum ada riwayat serangan</p>
+                                <p class="empty-state__text">Riwayat akan muncul ketika backend menyediakan data deteksi.</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="panel panel--span-12" id="panel-telegram" data-panel="telegram">
+                        <header class="panel__head">
+                            <div>
+                                <h2>Telegram Alerts</h2>
+                                <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                            </div>
+                            <span class="badge badge--neutral" data-status>
+                                <span class="status-dot" aria-hidden="true"></span>
+                                <span data-status-text>Menunggu</span>
+                            </span>
+                        </header>
+                        <p class="panel__error" data-section-error hidden></p>
+                        <div class="panel__body">
+                            <div class="telegram-layout">
+                                <div class="telegram-summary">
+                                    <div class="telegram-summary__stats">
+                                        <div>
+                                            <span>Terakhir</span>
+                                            <strong data-telegram-last>—</strong>
+                                        </div>
+                                        <div>
+                                            <span>Terkirim</span>
+                                            <strong data-telegram-delivered>0</strong>
+                                        </div>
+                                        <div>
+                                            <span>Gagal</span>
+                                            <strong data-telegram-failed>0</strong>
+                                        </div>
+                                    </div>
+                                    <p class="inline-message" id="telegram-test-message" role="status" hidden></p>
+                                    <button class="button button--ghost" id="telegram-test-btn" type="button">Kirim test alert</button>
+                                    <p class="panel__note">Token bot tidak pernah dikirim ke browser.</p>
+                                </div>
+                                <div class="telegram-feed">
+                                    <ul class="alert-list" data-telegram-list aria-label="Riwayat notifikasi Telegram"></ul>
+                                    <div class="empty-state" data-empty hidden>
+                                        <p class="empty-state__title">Belum ada riwayat notifikasi</p>
+                                        <p class="empty-state__text">Riwayat akan muncul setelah backend mencatat pengiriman alert.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </section>
+        </main>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+    <script type="module" src="{{ url_for('static', filename='js/security.js') }}"></script>
+{% endblock %}

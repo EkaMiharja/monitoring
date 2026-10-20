@@ -54,7 +54,7 @@ function updateHostCard(card, host) {
     if (badgeText) {
         badgeText.textContent =
             host.status === "ok"
-                ? "Live"
+                ? "Aktif"
                 : host.status === "empty"
                   ? "Kosong"
                   : host.status === "error"
@@ -70,8 +70,8 @@ function updateHostCard(card, host) {
     }
 
     card.classList.toggle("host-card--unavailable", host.status !== "ok");
-    updateMetricBlock(card, host, "cpu", "#38bdf8");
-    updateMetricBlock(card, host, "memory", "#fbbf24");
+    updateMetricBlock(card, host, "cpu", "#1f3a5f");
+    updateMetricBlock(card, host, "memory", "#7a520f");
 }
 
 export function updateResources(section) {

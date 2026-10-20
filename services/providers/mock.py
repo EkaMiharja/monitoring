@@ -3,19 +3,57 @@ import threading
 from collections import deque
 from datetime import timedelta
 
+from config import DEFAULT_VM, VM_IDS
 from services.providers.base import MonitoringProvider
 from services.stats import build_metric
 from utils import iso, parse_iso, utc_now
 
-TRAFFIC_SOURCE = "Pengukuran lokal laptop monitoring (DEMO)"
-QOS_SOURCE = "iperf3 + delay probe (DEMO)"
+TRAFFIC_SOURCE = "Flow simulasi per VM (DEMO)"
+QOS_SOURCE = "iperf3 + delay probe per VM (DEMO)"
 RESOURCE_SOURCE = "Glances (DEMO)"
 FAIL2BAN_SOURCE = "Fail2Ban (DEMO)"
 ATTACK_SOURCE = "Log deteksi LightGBM / Random Forest (DEMO)"
 
+VM_PROFILES = {
+    "randomforest-vm": {
+        "inbound": 78.0,
+        "outbound": 32.0,
+        "delay": 18.0,
+        "jitter": 2.4,
+        "loss": 0.42,
+        "throughput": 96.0,
+        "cpu": 39.0,
+        "memory": 57.0,
+    },
+    "lightgbm-vm": {
+        "inbound": 64.0,
+        "outbound": 25.0,
+        "delay": 22.0,
+        "jitter": 3.1,
+        "loss": 0.65,
+        "throughput": 88.0,
+        "cpu": 46.0,
+        "memory": 61.0,
+    },
+    "fail2ban-vm": {
+        "inbound": 41.0,
+        "outbound": 17.0,
+        "delay": 27.0,
+        "jitter": 2.0,
+        "loss": 0.3,
+        "throughput": 72.0,
+        "cpu": 24.0,
+        "memory": 43.0,
+    },
+}
+
+QOS_METRICS = ("delay", "jitter", "packet_loss", "throughput")
+
 
 class MockProvider(MonitoringProvider):
     data_mode = "demo"
+    default_vm = DEFAULT_VM
+    vm_ids = VM_IDS
 
     def __init__(self, config, telegram_service):
         self.config = config
@@ -26,58 +64,75 @@ class MockProvider(MonitoringProvider):
         self.random = random.Random(20261020)
         self.lock = threading.Lock()
 
-        self.traffic = deque(maxlen=self.max_points)
-        self.qos = {
-            "delay": deque(maxlen=self.max_points),
-            "jitter": deque(maxlen=self.max_points),
-            "packet_loss": deque(maxlen=self.max_points),
-            "throughput": deque(maxlen=self.max_points),
+        self.vm_traffic = {
+            vm: deque(maxlen=self.max_points) for vm in self.vm_ids
+        }
+        self.vm_qos = {
+            vm: {metric: deque(maxlen=self.max_points) for metric in QOS_METRICS}
+            for vm in self.vm_ids
         }
         self.hosts = {
-            "lightgbm-vm": {"cpu": deque(maxlen=self.max_points), "memory": deque(maxlen=self.max_points)},
-            "randomforest-vm": {"cpu": deque(maxlen=self.max_points), "memory": deque(maxlen=self.max_points)},
-            "fail2ban-vm": {"cpu": deque(maxlen=self.max_points), "memory": deque(maxlen=self.max_points)},
+            vm: {
+                "cpu": deque(maxlen=self.max_points),
+                "memory": deque(maxlen=self.max_points),
+            }
+            for vm in self.vm_ids
         }
 
         self._seed_history()
         self._blocked = self._seed_blocked()
         self._attacks = self._seed_attacks()
 
+    def _resolve_vm(self, vm):
+        selected = vm or self.default_vm
+        if selected not in self.vm_ids:
+            raise ValueError(f"VM tidak dikenal: {selected}")
+        return selected
+
     def _seed_history(self):
         now = utc_now()
         step = max(self.interval_seconds, 1)
         points = min(self.max_points, max(12, int(self.window_seconds // step)))
         start = now - timedelta(seconds=(points - 1) * step)
-
-        inbound = 78.0
-        outbound = 32.0
-        delay = 18.0
-        jitter = 2.4
-        loss = 0.42
-        throughput = 96.0
-        cpu = {"lightgbm-vm": 46.0, "randomforest-vm": 39.0, "fail2ban-vm": 24.0}
-        memory = {"lightgbm-vm": 61.0, "randomforest-vm": 57.0, "fail2ban-vm": 43.0}
+        state = {vm: dict(VM_PROFILES[vm]) for vm in self.vm_ids}
 
         for index in range(points):
             timestamp = iso(start + timedelta(seconds=index * step))
-            inbound = self._walk(inbound, 6.0, 8.0, 260.0)
-            outbound = self._walk(outbound, 3.2, 4.0, 180.0)
-            delay = self._walk(delay, 1.6, 9.0, 42.0)
-            jitter = self._walk(jitter, 0.35, 0.5, 7.5)
-            loss = self._walk(loss, 0.12, 0.0, 2.5)
-            throughput = self._walk(throughput, 6.0, 45.0, 145.0)
+            for vm, profile in state.items():
+                profile["inbound"] = self._walk(profile["inbound"], 6.0, 8.0, 260.0)
+                profile["outbound"] = self._walk(profile["outbound"], 3.2, 4.0, 180.0)
+                profile["delay"] = self._walk(profile["delay"], 1.6, 9.0, 42.0)
+                profile["jitter"] = self._walk(profile["jitter"], 0.35, 0.5, 7.5)
+                profile["loss"] = self._walk(profile["loss"], 0.12, 0.0, 2.5)
+                profile["throughput"] = self._walk(profile["throughput"], 6.0, 45.0, 145.0)
+                profile["cpu"] = self._walk(profile["cpu"], 4.5, 6.0, 92.0)
+                profile["memory"] = self._walk(profile["memory"], 2.0, 25.0, 93.0)
 
-            self.traffic.append({"t": timestamp, "inbound": round(inbound, 2), "outbound": round(outbound, 2)})
-            self.qos["delay"].append({"t": timestamp, "value": round(delay, 2)})
-            self.qos["jitter"].append({"t": timestamp, "value": round(jitter, 2)})
-            self.qos["packet_loss"].append({"t": timestamp, "value": round(loss, 2)})
-            self.qos["throughput"].append({"t": timestamp, "value": round(throughput, 2)})
-
-            for host in self.hosts:
-                cpu[host] = self._walk(cpu[host], 4.5, 6.0, 92.0)
-                memory[host] = self._walk(memory[host], 2.0, 25.0, 93.0)
-                self.hosts[host]["cpu"].append({"t": timestamp, "value": round(cpu[host], 2)})
-                self.hosts[host]["memory"].append({"t": timestamp, "value": round(memory[host], 2)})
+                self.vm_traffic[vm].append(
+                    {
+                        "t": timestamp,
+                        "inbound": round(profile["inbound"], 2),
+                        "outbound": round(profile["outbound"], 2),
+                    }
+                )
+                self.vm_qos[vm]["delay"].append(
+                    {"t": timestamp, "value": round(profile["delay"], 2)}
+                )
+                self.vm_qos[vm]["jitter"].append(
+                    {"t": timestamp, "value": round(profile["jitter"], 2)}
+                )
+                self.vm_qos[vm]["packet_loss"].append(
+                    {"t": timestamp, "value": round(profile["loss"], 2)}
+                )
+                self.vm_qos[vm]["throughput"].append(
+                    {"t": timestamp, "value": round(profile["throughput"], 2)}
+                )
+                self.hosts[vm]["cpu"].append(
+                    {"t": timestamp, "value": round(profile["cpu"], 2)}
+                )
+                self.hosts[vm]["memory"].append(
+                    {"t": timestamp, "value": round(profile["memory"], 2)}
+                )
 
         self._last_sample = start + timedelta(seconds=(points - 1) * step)
 
@@ -94,31 +149,40 @@ class MockProvider(MonitoringProvider):
             if (now - self._last_sample).total_seconds() < max(3.5, self.interval_seconds * 0.8):
                 return
             timestamp = iso(now)
-            last_traffic = self.traffic[-1]
-            last = {key: self.qos[key][-1]["value"] for key in self.qos}
-            self.traffic.append(
-                {
-                    "t": timestamp,
-                    "inbound": round(self._walk(last_traffic["inbound"], 6.0, 8.0, 260.0), 2),
-                    "outbound": round(self._walk(last_traffic["outbound"], 3.2, 4.0, 180.0), 2),
-                }
-            )
             spreads = {
                 "delay": (1.6, 9.0, 42.0),
                 "jitter": (0.35, 0.5, 7.5),
                 "packet_loss": (0.12, 0.0, 2.5),
                 "throughput": (6.0, 45.0, 145.0),
             }
-            for key, value in last.items():
-                spread, low, high = spreads[key]
-                self.qos[key].append(
-                    {"t": timestamp, "value": round(self._walk(value, spread, low, high), 2)}
+            for vm, profile in {vm: dict(VM_PROFILES[vm]) for vm in self.vm_ids}.items():
+                last_traffic = self.vm_traffic[vm][-1]
+                profile["inbound"] = self._walk(last_traffic["inbound"], 6.0, 8.0, 260.0)
+                profile["outbound"] = self._walk(last_traffic["outbound"], 3.2, 4.0, 180.0)
+                self.vm_traffic[vm].append(
+                    {
+                        "t": timestamp,
+                        "inbound": round(profile["inbound"], 2),
+                        "outbound": round(profile["outbound"], 2),
+                    }
                 )
-            for host, data in self.hosts.items():
-                cpu = data["cpu"][-1]["value"]
-                memory = data["memory"][-1]["value"]
-                data["cpu"].append({"t": timestamp, "value": round(self._walk(cpu, 4.5, 6.0, 92.0), 2)})
-                data["memory"].append(
+
+                for key in QOS_METRICS:
+                    previous = self.vm_qos[vm][key][-1]["value"]
+                    spread, low, high = spreads[key]
+                    self.vm_qos[vm][key].append(
+                        {
+                            "t": timestamp,
+                            "value": round(self._walk(previous, spread, low, high), 2),
+                        }
+                    )
+
+                cpu = self.hosts[vm]["cpu"][-1]["value"]
+                memory = self.hosts[vm]["memory"][-1]["value"]
+                self.hosts[vm]["cpu"].append(
+                    {"t": timestamp, "value": round(self._walk(cpu, 4.5, 6.0, 92.0), 2)}
+                )
+                self.hosts[vm]["memory"].append(
                     {"t": timestamp, "value": round(self._walk(memory, 2.0, 25.0, 93.0), 2)}
                 )
             self._last_sample = now
@@ -181,13 +245,14 @@ class MockProvider(MonitoringProvider):
             for minutes, source_ip, model, blocking in rows
         ]
 
-    def get_overview(self):
+    def get_overview(self, vm=None):
+        selected = self._resolve_vm(vm)
         self._maybe_append_sample()
 
-        traffic_series = self._window(self.traffic)
+        traffic_series = self._window(self.vm_traffic[selected])
         traffic = {
             "status": "ok" if traffic_series else "empty",
-            "source": TRAFFIC_SOURCE,
+            "source": f"{TRAFFIC_SOURCE} · {selected}",
             "unit": "Mbps",
             "error": None if traffic_series else "Belum ada sampel traffic.",
             "series": traffic_series,
@@ -200,36 +265,38 @@ class MockProvider(MonitoringProvider):
             ("packet_loss", "%"),
             ("throughput", "Mbps"),
         ):
-            series = self._window(self.qos[key])
-            metrics[key] = build_metric(series, unit, QOS_SOURCE)
+            series = self._window(self.vm_qos[selected][key])
+            metrics[key] = build_metric(series, unit, f"{QOS_SOURCE} · {selected}")
             if not series:
                 metrics[key].update(status="empty", error="Belum ada sampel pengukuran.")
 
         qos = {
             "status": "ok",
-            "source": QOS_SOURCE,
+            "source": f"{QOS_SOURCE} · {selected}",
             "error": None,
             "metrics": metrics,
             "test": {
                 "protocol": self.config.get("IPERF3_TEST_PROTOCOL", "udp").upper(),
                 "direction": "upload",
                 "client": "monitoring-laptop (DEMO)",
-                "server": "lightgbm-vm (DEMO)",
+                "server": f"{selected} (DEMO)",
                 "duration_seconds": self.config.get("IPERF3_TEST_DURATION_SECONDS", 10),
                 "status": "success",
                 "timestamp": iso(self._last_sample),
             },
         }
 
+        host_ids = self.vm_ids if vm is None else (selected,)
         hosts = []
-        for host, data in self.hosts.items():
-            cpu_series = self._window(data["cpu"])
-            memory_series = self._window(data["memory"])
+        for host in host_ids:
+            cpu_series = self._window(self.hosts[host]["cpu"])
+            memory_series = self._window(self.hosts[host]["memory"])
             hosts.append(
                 {
+                    "id": host,
                     "host": host,
                     "status": "ok" if cpu_series and memory_series else "empty",
-                    "source": RESOURCE_SOURCE,
+                    "source": f"{RESOURCE_SOURCE} · {host}",
                     "cpu": build_metric(cpu_series, "%", RESOURCE_SOURCE),
                     "memory": build_metric(memory_series, "%", RESOURCE_SOURCE),
                 }
@@ -251,6 +318,7 @@ class MockProvider(MonitoringProvider):
         }
 
         return {
+            "vm": selected,
             "traffic": traffic,
             "qos": qos,
             "resources": resources,

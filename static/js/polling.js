@@ -5,6 +5,7 @@ export class Poller {
         this.onError = onError;
         this.running = false;
         this.inFlight = false;
+        this.pending = false;
         this.timer = null;
         this.controller = null;
     }
@@ -17,12 +18,21 @@ export class Poller {
 
     stop() {
         this.running = false;
+        this.pending = false;
         clearTimeout(this.timer);
         this.timer = null;
         if (this.controller) {
             this.controller.abort();
             this.controller = null;
         }
+    }
+
+    kick() {
+        if (!this.running) return;
+        this.pending = true;
+        clearTimeout(this.timer);
+        this.timer = null;
+        if (!this.inFlight) this._run();
     }
 
     refresh() {
@@ -49,7 +59,13 @@ export class Poller {
         } finally {
             this.inFlight = false;
             this.controller = null;
-            if (this.running) this._schedule(this.intervalMs);
+            if (!this.running) return;
+            if (this.pending) {
+                this.pending = false;
+                this._schedule(0);
+            } else {
+                this._schedule(this.intervalMs);
+            }
         }
     }
 }

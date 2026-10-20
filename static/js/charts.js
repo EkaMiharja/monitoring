@@ -1,7 +1,8 @@
 import { formatNumber } from "./format.js";
 
-const TICK_COLOR = "#6f819e";
-const GRID_COLOR = "rgba(148, 166, 194, 0.10)";
+const TICK_COLOR = "#6b716a";
+const GRID_COLOR = "rgba(23, 26, 24, 0.08)";
+const DATA_FONT = "'Montserrat', 'Segoe UI', sans-serif";
 
 function withAlpha(hex, alpha) {
     const value = hex.replace("#", "");
@@ -21,19 +22,21 @@ function options(datasets, unit) {
             legend: {
                 display: datasets.length > 1,
                 labels: {
-                    color: "#94a6c2",
+                    color: "#50564f",
                     boxWidth: 14,
                     boxHeight: 3,
                     font: { size: 10 },
                 },
             },
             tooltip: {
-                backgroundColor: "#0b1220",
-                borderColor: "#2f4363",
+                backgroundColor: "#fbfaf6",
+                borderColor: "#d8d4c9",
                 borderWidth: 1,
-                titleColor: "#e8eefb",
-                bodyColor: "#94a6c2",
+                titleColor: "#171a18",
+                bodyColor: "#50564f",
                 padding: 10,
+                titleFont: { family: DATA_FONT, size: 11, weight: "500" },
+                bodyFont: { family: DATA_FONT, size: 11 },
                 callbacks: {
                     label(context) {
                         const label = context.dataset.label ? `${context.dataset.label}: ` : "";
@@ -52,7 +55,7 @@ function options(datasets, unit) {
                     maxTicksLimit: 6,
                     maxRotation: 0,
                     autoSkip: true,
-                    font: { size: 10 },
+                    font: { family: DATA_FONT, size: 10 },
                 },
             },
             y: {
@@ -62,7 +65,7 @@ function options(datasets, unit) {
                 ticks: {
                     color: TICK_COLOR,
                     maxTicksLimit: 5,
-                    font: { size: 10 },
+                    font: { family: DATA_FONT, size: 10 },
                     callback: (value) => formatNumber(value, 1),
                 },
             },

@@ -1,10 +1,10 @@
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 import db
 from api.routes import bp as api_bp
 from auth.decorators import login_required
 from auth.routes import bp as auth_bp
-from config import Config
+from config import DEFAULT_VM, VM_IDS, Config, VM_SPECS
 from security import get_csrf_token
 from services.providers.live import LiveProvider
 from services.providers.mock import MockProvider
@@ -41,7 +41,7 @@ def create_app(test_config=None):
     def inject_globals():
         return {
             "csrf_token": get_csrf_token,
-            "app_name": "SSH Sentinel",
+            "app_name": "Dashboard",
             "data_mode": app.config["DATA_MODE"],
         }
 
@@ -54,10 +54,41 @@ def create_app(test_config=None):
     @app.get("/dashboard")
     @login_required
     def dashboard():
+        vm_options = [
+            {
+                "id": spec["id"],
+                "label": app.config.get(spec["label_key"]) or spec["id"],
+                "role": spec["role"],
+            }
+            for spec in VM_SPECS
+        ]
+        requested_vm = (request.args.get("vm") or "").strip()
+        active_vm = requested_vm if requested_vm in VM_IDS else DEFAULT_VM
+        qos_vm = app.config.get("QOS_VM") or DEFAULT_VM
+        if qos_vm not in VM_IDS:
+            qos_vm = DEFAULT_VM
         return render_template(
             "dashboard/index.html",
             username=session.get("username", "User"),
             poll_interval_ms=app.config["POLL_INTERVAL_MS"],
+            vm_options=vm_options,
+            default_vm=active_vm,
+            qos_vm=qos_vm,
+            active_page="overview",
+            page_name="Overview",
+            overview_url=url_for("dashboard", vm=active_vm),
+        )
+
+    @app.get("/security")
+    @login_required
+    def security_feed():
+        return render_template(
+            "dashboard/security.html",
+            username=session.get("username", "User"),
+            poll_interval_ms=app.config["POLL_INTERVAL_MS"],
+            active_page="security",
+            page_name="Security Feed",
+            overview_url=url_for("dashboard"),
         )
 
     @app.after_request
@@ -83,7 +114,6 @@ def create_app(test_config=None):
         message = getattr(error, "description", "Permintaan tidak valid.")
         if wants_json():
             return jsonify(error="bad_request", message=message), 400
-        flash(message, "error")
         return render_template("errors/error.html", code=400, message=message), 400
 
     @app.errorhandler(404)

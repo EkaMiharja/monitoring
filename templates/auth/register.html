@@ -6,63 +6,84 @@
 {% endblock %}
 {% block layout %}
 <main class="auth-shell" id="main">
-    <section class="auth-card">
-        <div class="auth-brand">
-            <span class="brand-mark brand-mark--lg">S</span>
-            <div>
-                <strong>{{ app_name }}</strong>
-                <span>Monitoring SSH Brute Force</span>
-            </div>
-        </div>
-
-        <header class="auth-card__head">
-            <p class="auth-card__eyebrow">Authentication</p>
-            <h1>Register</h1>
-            <p class="auth-card__text">Buat akun untuk mengakses dashboard monitoring.</p>
-        </header>
-
-        {% include "_flash.html" %}
-
-        {% if errors %}
-            <div class="form-errors" role="alert">
-                <ul>
-                    {% for error in errors %}
-                        <li>{{ error }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-        {% endif %}
-
-        <form class="form" method="post" action="{{ url_for('auth.register') }}" novalidate>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-            <div class="field">
-                <label for="username">Username</label>
-                <input id="username" name="username" type="text" autocomplete="username"
-                       value="{{ form.username }}" required minlength="3" maxlength="32"
-                       pattern="[A-Za-z0-9_.\-]{3,32}" placeholder="3-32 karakter">
-                <p class="field__hint">Huruf, angka, titik, garis bawah, atau strip.</p>
+    <div class="auth-frame">
+        <aside class="auth-aside">
+            <div class="auth-brand">
+                <span class="brand-mark brand-mark--lg">S</span>
+                <div>
+                    <strong>{{ app_name }}</strong>
+                    <span>Monitoring SSH Brute Force</span>
+                </div>
             </div>
 
-            <div class="field">
-                <label for="password">Password</label>
-                <input id="password" name="password" type="password" autocomplete="new-password"
-                       required minlength="8" placeholder="Minimal 8 karakter">
+            <div class="auth-aside__copy">
+                <p class="auth-kicker">Access control</p>
+                <h1>Buat akun operator.</h1>
+                <p>
+                    Akun dipakai untuk membuka dashboard monitoring dan menjalankan
+                    pengukuran QoS manual dari konsol.
+                </p>
             </div>
 
-            <div class="field">
-                <label for="confirm_password">Konfirmasi Password</label>
-                <input id="confirm_password" name="confirm_password" type="password"
-                       autocomplete="new-password" required minlength="8"
-                       placeholder="Ulangi password">
-            </div>
+            <ul class="auth-facts">
+                <li><span>Scope</span><strong>Network flow, QoS, resource VM</strong></li>
+                <li><span>Feed</span><strong>Fail2Ban, attack history, Telegram</strong></li>
+                <li><span>Mode</span><strong>{{ data_mode|upper }}</strong></li>
+            </ul>
 
-            <button class="button button--primary button--block" type="submit">Register</button>
-        </form>
+            <p class="auth-aside__foot">Gunakan kredensial yang tidak dipakai di layanan lain.</p>
+        </aside>
 
-        <p class="auth-card__foot">
-            Sudah punya akun? <a href="{{ url_for('auth.login') }}">Login</a>
-        </p>
-    </section>
+        <section class="auth-panel">
+            <header class="auth-panel__head">
+                <p class="auth-kicker">Authentication</p>
+                <h2>Register</h2>
+                <p>Buat akun untuk mengakses dashboard monitoring.</p>
+            </header>
+
+            {% include "_flash.html" %}
+
+            {% if errors %}
+                <div class="form-errors" role="alert">
+                    <ul>
+                        {% for error in errors %}
+                            <li>{{ error }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+
+            <form class="form" method="post" action="{{ url_for('auth.register') }}" novalidate>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="field">
+                    <label for="username">Username</label>
+                    <input id="username" name="username" type="text" autocomplete="username"
+                           value="{{ form.username }}" required minlength="3" maxlength="32"
+                           pattern="[A-Za-z0-9_.\-]{3,32}" placeholder="3-32 karakter">
+                    <p class="field__hint">Huruf, angka, titik, garis bawah, atau strip.</p>
+                </div>
+
+                <div class="field">
+                    <label for="password">Password</label>
+                    <input id="password" name="password" type="password" autocomplete="new-password"
+                           required minlength="8" placeholder="Minimal 8 karakter">
+                </div>
+
+                <div class="field">
+                    <label for="confirm_password">Konfirmasi Password</label>
+                    <input id="confirm_password" name="confirm_password" type="password"
+                           autocomplete="new-password" required minlength="8"
+                           placeholder="Ulangi password">
+                </div>
+
+                <button class="button button--primary button--block" type="submit">Register</button>
+            </form>
+
+            <p class="auth-card__foot">
+                Sudah punya akun? <a href="{{ url_for('auth.login') }}">Login</a>
+            </p>
+        </section>
+    </div>
 </main>
 {% endblock %}

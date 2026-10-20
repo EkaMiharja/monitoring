@@ -24,11 +24,14 @@ const iperfRunButton = document.getElementById("iperf-run-btn");
 const delayRunButton = document.getElementById("delay-run-btn");
 const qosRunMessage = document.getElementById("qos-run-message");
 const qosRunState = document.querySelector("[data-qos-run-state]");
+const vmSelect = document.getElementById("vm-select");
 
 let lastGeneratedAt = null;
-let demoMode = false;
+let demoMode = demoBanner ? !demoBanner.hidden : false;
 let qosBusy = false;
 let runTimer = null;
+let qosVmId = shell?.dataset.qosVm || "";
+let currentVm = vmSelect?.value || shell?.dataset.defaultVm || "";
 
 function setConnection(state, text) {
     if (!connection) return;
@@ -52,11 +55,37 @@ function updateDemoBanner(mode) {
 }
 
 function syncQosButtons() {
+    const qosMismatch = Boolean(qosVmId) && currentVm !== qosVmId;
     [iperfRunButton, delayRunButton].forEach((button) => {
         if (!button) return;
-        button.disabled = qosBusy || demoMode;
-        if (demoMode) button.title = "Hanya tersedia pada mode live.";
+        button.disabled = qosBusy || demoMode || qosMismatch;
+        if (demoMode) {
+            button.title = "Hanya tersedia pada mode live.";
+        } else if (qosMismatch) {
+            button.title = `QoS hanya diukur untuk ${qosVmId}.`;
+        } else {
+            button.removeAttribute("title");
+        }
     });
+}
+
+function switchVm(vm) {
+    if (!vm || vm === currentVm) return;
+    currentVm = vm;
+
+    if (runTimer) {
+        clearInterval(runTimer);
+        runTimer = null;
+        setQosBusy(false);
+        setQosMessage("Pemantauan tes dihentikan karena VM berubah.");
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("vm", vm);
+    window.history.replaceState(null, "", url);
+
+    syncQosButtons();
+    poller.kick();
 }
 
 function setQosMessage(text, kind) {
@@ -114,6 +143,10 @@ async function triggerQos(action, initMessage) {
 
 function applyOverview(data) {
     lastGeneratedAt = data.generated_at || null;
+    if (data.qos_vm?.id && data.qos_vm.id !== qosVmId) {
+        qosVmId = data.qos_vm.id;
+        syncQosButtons();
+    }
     updateTraffic(data.traffic || {});
     updateQos(data.qos || {});
     updateResources(data.resources || {});
@@ -141,7 +174,9 @@ function handleError(error) {
 const poller = new Poller({
     intervalMs,
     onTick: async (signal) => {
-        const data = await fetchOverview({ signal });
+        const requestVm = currentVm;
+        const data = await fetchOverview({ vm: requestVm, signal });
+        if (requestVm !== currentVm) return;
         applyOverview(data);
     },
     onError: handleError,
@@ -163,6 +198,10 @@ async function refreshNow() {
 }
 
 if (refreshButton) refreshButton.addEventListener("click", refreshNow);
+
+if (vmSelect) {
+    vmSelect.addEventListener("change", () => switchVm(vmSelect.value));
+}
 
 if (telegramButton) {
     telegramButton.addEventListener("click", async () => {
@@ -223,6 +262,13 @@ document.addEventListener("keydown", (event) => {
 });
 
 initAttacks();
+if (currentVm) {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("vm") !== currentVm) {
+        url.searchParams.set("vm", currentVm);
+        window.history.replaceState(null, "", url);
+    }
+}
 syncQosButtons();
 setConnection("connecting", "Menghubungkan…");
 poller.start();

@@ -1,7 +1,8 @@
-export async function fetchOverview({ signal } = {}) {
+export async function fetchOverview({ vm, signal } = {}) {
+    const query = vm ? `?vm=${encodeURIComponent(vm)}` : "";
     let response;
     try {
-        response = await fetch("/api/overview", {
+        response = await fetch(`/api/overview${query}`, {
             method: "GET",
             headers: { Accept: "application/json" },
             credentials: "same-origin",

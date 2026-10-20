@@ -41,6 +41,32 @@ def test_overview_rejects_missing_auth(client):
     assert client.get("/api/overview").status_code == 401
 
 
+def test_overview_filters_telemetry_by_vm(auth_client):
+    payload = auth_client.get("/api/overview?vm=fail2ban-vm").get_json()
+
+    assert payload["vm"] == {"id": "fail2ban-vm", "label": "fail2ban-vm"}
+    assert payload["resources"]["status"] == "ok"
+    assert [host["host"] for host in payload["resources"]["hosts"]] == ["fail2ban-vm"]
+    assert payload["traffic"]["status"] == "ok"
+    assert payload["traffic"]["source"].endswith("fail2ban-vm")
+    assert payload["qos"]["status"] == "ok"
+    assert set(payload["qos"]["metrics"]) == {"delay", "jitter", "packet_loss", "throughput"}
+
+
+def test_overview_rejects_unknown_vm(auth_client):
+    response = auth_client.get("/api/overview?vm=unknown-vm")
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["error"] == "invalid_vm"
+    assert "fail2ban-vm" in body["available_vms"]
+
+
+def test_overview_legacy_without_vm_keeps_all_hosts(auth_client):
+    payload = auth_client.get("/api/overview").get_json()
+    assert payload["vm"]["id"] == "randomforest-vm"
+    assert len(payload["resources"]["hosts"]) == 3
+
+
 def test_telegram_test_endpoint_demo(auth_client):
     before = auth_client.get("/api/overview").get_json()["telegram"]["items"]
     response = auth_client.post("/api/telegram/test")
@@ -87,6 +113,48 @@ def test_live_mode_reports_unavailable_sources(tmp_path, client):
     assert payload["qos"]["status"] == "unavailable"
     assert all(host["status"] == "unavailable" for host in payload["resources"]["hosts"])
     assert payload["errors"]
+
+
+def test_live_mode_filters_one_vm_and_reports_missing_flow_source(tmp_path):
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-vm.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "ATTACK_HISTORY_API_URL": "",
+            "FLOW_FEATURES_API_URL": "http://rf.test/api/features",
+            "FLOW_FEATURES_LIGHTGBM_URL": "",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_VM": "randomforest-vm",
+        }
+    )
+    live_client = app.test_client()
+    with live_client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "live-tester"
+
+    payload = live_client.get("/api/overview?vm=lightgbm-vm").get_json()
+
+    assert payload["vm"]["id"] == "lightgbm-vm"
+    assert [host["host"] for host in payload["resources"]["hosts"]] == ["lightgbm-vm"]
+    assert payload["traffic"]["status"] == "unavailable"
+    assert "lightgbm-vm" in payload["traffic"]["error"]
+    assert payload["qos"]["status"] == "unavailable"
+    assert all(
+        metric["status"] == "unavailable"
+        for metric in payload["qos"]["metrics"].values()
+    )
+    assert payload["blocked_ips"]["status"] == "unavailable"
 
 
 def test_live_attacks_sends_token_and_maps_rf_payload(monkeypatch, tmp_path):

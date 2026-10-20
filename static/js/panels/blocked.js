@@ -20,7 +20,6 @@ export function updateBlocked(section) {
             }),
         );
         row.appendChild(el("td", { text: item.jail || "—" }));
-        row.appendChild(el("td", { text: item.source || "—" }));
 
         const statusCell = el("td");
         const blocked = String(item.status || "").toLowerCase() === "blocked";

@@ -3,10 +3,10 @@ import { formatDateTime, formatNumber, formatTime, toNumber } from "../format.js
 import { setChartState, updatePanelMeta } from "../ui.js";
 
 const METRICS = [
-    { key: "delay", label: "Delay", unit: "ms", color: "#38bdf8" },
-    { key: "jitter", label: "Jitter", unit: "ms", color: "#a78bfa" },
-    { key: "packet_loss", label: "Packet Loss", unit: "%", color: "#fb7185" },
-    { key: "throughput", label: "Throughput", unit: "Mbps", color: "#34d399" },
+    { key: "delay", label: "Delay", unit: "ms", color: "#1f3a5f" },
+    { key: "jitter", label: "Jitter", unit: "ms", color: "#7a6a4f" },
+    { key: "packet_loss", label: "Packet Loss", unit: "%", color: "#982d22" },
+    { key: "throughput", label: "Throughput", unit: "Mbps", color: "#21614a" },
 ];
 
 const charts = new Map();

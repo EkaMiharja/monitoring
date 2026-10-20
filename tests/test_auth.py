@@ -37,6 +37,22 @@ def test_register_login_logout_flow(client, app):
     assert client.get("/dashboard").status_code == 302
 
 
+def test_security_feed_is_separate_page(auth_client):
+    dashboard = auth_client.get("/dashboard")
+    assert dashboard.status_code == 200
+    assert b"Security Feed" in dashboard.data
+    assert b'href="/security"' in dashboard.data
+    assert b'id="panel-blocked"' not in dashboard.data
+
+    response = auth_client.get("/security")
+    assert response.status_code == 200
+    assert b"Security Feed" in response.data
+    assert b"Feed keamanan global" in response.data
+    assert b'id="panel-blocked"' in response.data
+    assert b'id="panel-attacks"' in response.data
+    assert b'id="panel-telegram"' in response.data
+
+
 def test_login_rejects_wrong_password(client):
     client.post(
         "/register",
@@ -108,3 +124,7 @@ def test_csrf_rejects_post_without_token(tmp_path):
     )
     assert response.status_code == 400
     assert b"CSRF token tidak valid" in response.data
+
+
+def test_security_feed_requires_auth(client):
+    assert client.get("/security").status_code == 302

@@ -7,6 +7,26 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
+VM_SPECS = (
+    {
+        "id": "randomforest-vm",
+        "label_key": "GLANCES_RANDOM_FOREST_LABEL",
+        "role": "Network flow · QoS · resource",
+    },
+    {
+        "id": "lightgbm-vm",
+        "label_key": "GLANCES_LIGHTGBM_LABEL",
+        "role": "Resource host",
+    },
+    {
+        "id": "fail2ban-vm",
+        "label_key": "GLANCES_FAIL2BAN_LABEL",
+        "role": "Resource host",
+    },
+)
+VM_IDS = tuple(spec["id"] for spec in VM_SPECS)
+DEFAULT_VM = "randomforest-vm"
+
 
 def _bool(value, default=False):
     if value is None:
@@ -49,6 +69,9 @@ class Config:
     ATTACK_HISTORY_API_TOKEN = _text("ATTACK_HISTORY_API_TOKEN")
     FLOW_FEATURES_API_URL = _text("FLOW_FEATURES_API_URL")
     FLOW_FEATURES_API_TOKEN = _text("FLOW_FEATURES_API_TOKEN")
+    FLOW_FEATURES_LIGHTGBM_URL = _text("FLOW_FEATURES_LIGHTGBM_URL")
+    FLOW_FEATURES_RANDOM_FOREST_URL = _text("FLOW_FEATURES_RANDOM_FOREST_URL")
+    FLOW_FEATURES_FAIL2BAN_URL = _text("FLOW_FEATURES_FAIL2BAN_URL")
 
     GLANCES_LIGHTGBM_URL = _text("GLANCES_LIGHTGBM_URL")
     GLANCES_RANDOM_FOREST_URL = _text("GLANCES_RANDOM_FOREST_URL")
@@ -58,6 +81,7 @@ class Config:
     GLANCES_FAIL2BAN_LABEL = _text("GLANCES_FAIL2BAN_LABEL", "fail2ban-vm")
 
     QOS_HISTORY_POINTS = _int("QOS_HISTORY_POINTS", 240)
+    QOS_VM = _text("QOS_VM", DEFAULT_VM)
 
     IPERF3_ENABLED = _bool(os.getenv("IPERF3_ENABLED"), False)
     IPERF3_RESULT_URL = _text("IPERF3_RESULT_URL")
