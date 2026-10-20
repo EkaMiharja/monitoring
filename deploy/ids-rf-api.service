@@ -1,0 +1,22 @@
+[Unit]
+Description=IDS Random Forest read-only API
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+WorkingDirectory=/home/server/ids-backend
+EnvironmentFile=/home/server/ids-backend/.rf-api.env
+ExecStart=/usr/bin/python3 /home/server/ids-backend/rf_api.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+Environment=PYTHONDONTWRITEBYTECODE=1
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/home/server/ids-backend/database /home/server/ids-backend/capture/processed
+
+[Install]
+WantedBy=multi-user.target

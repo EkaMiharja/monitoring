@@ -1,0 +1,15 @@
+[Unit]
+Description=iperf3 server for QoS monitoring
+After=network.target
+
+[Service]
+User=server
+Group=server
+ExecStart=/usr/bin/iperf3 -s -p 5201
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

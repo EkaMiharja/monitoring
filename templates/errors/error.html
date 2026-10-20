@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} · {{ app_name }}{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block styles %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+{% endblock %}
+{% block layout %}
+<main class="auth-shell" id="main">
+    <section class="auth-card auth-card--error">
+        <p class="auth-card__eyebrow">Error {{ code }}</p>
+        <h1>{{ message }}</h1>
+        <p class="auth-card__text">Kembali ke dashboard atau login untuk melanjutkan.</p>
+        <div class="auth-card__actions">
+            <a class="button button--primary" href="{{ url_for('dashboard') }}">Kembali ke Dashboard</a>
+            <a class="button button--ghost" href="{{ url_for('auth.login') }}">Login</a>
+        </div>
+    </section>
+</main>
+{% endblock %}

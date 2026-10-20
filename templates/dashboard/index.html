@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+{% block title %}Overview · {{ app_name }}{% endblock %}
+{% block body_class %}dashboard-page{% endblock %}
+{% block styles %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+{% endblock %}
+{% block layout %}
+<div class="app-shell" data-poll-interval="{{ poll_interval_ms }}">
+    <aside class="sidebar" id="sidebar" aria-label="Navigasi utama">
+        <div class="sidebar__brand">
+            <span class="brand-mark">S</span>
+            <div>
+                <strong>{{ app_name }}</strong>
+                <span>SSH Brute Force Monitor</span>
+            </div>
+        </div>
+
+        <nav class="sidebar__nav">
+            <p class="sidebar__label">Monitoring</p>
+            <a class="nav-item is-active" href="#panel-traffic" data-nav-link>Overview</a>
+            <a class="nav-item" href="#panel-traffic" data-nav-link>Network Flow</a>
+            <a class="nav-item" href="#panel-qos" data-nav-link>QoS</a>
+            <a class="nav-item" href="#panel-resources" data-nav-link>System Resource</a>
+            <a class="nav-item" href="#panel-blocked" data-nav-link>Blocked IP</a>
+            <a class="nav-item" href="#panel-attacks" data-nav-link>Attack History</a>
+            <a class="nav-item" href="#panel-telegram" data-nav-link>Telegram Alerts</a>
+        </nav>
+
+        <div class="sidebar__footer">
+            <div class="user-chip">
+                <span class="user-chip__avatar">{{ username[0]|upper }}</span>
+                <div>
+                    <strong>{{ username }}</strong>
+                    <span>Administrator</span>
+                </div>
+            </div>
+            <form method="post" action="{{ url_for('auth.logout') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="button button--ghost button--block" type="submit">Logout</button>
+            </form>
+        </div>
+    </aside>
+    <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+
+    <div class="app-main">
+        <header class="topbar">
+            <div class="topbar__left">
+                <button class="icon-button" id="sidebar-toggle" type="button"
+                        aria-label="Buka navigasi" aria-expanded="false" aria-controls="sidebar">
+                    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                        <path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                </button>
+                <div>
+                    <p class="eyebrow">Dashboard</p>
+                    <h1>Overview</h1>
+                </div>
+            </div>
+            <div class="topbar__right">
+                <div class="connection" id="connection" data-connection="connecting">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span id="connection-text" aria-live="polite">Menghubungkan…</span>
+                </div>
+                <div class="last-updated">
+                    <span>Last updated</span>
+                    <strong id="last-updated">—</strong>
+                </div>
+                <button class="button button--ghost" id="refresh-button" type="button">
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                        <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" fill="none" stroke="currentColor"
+                              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+        </header>
+
+        <main class="content" id="main">
+            {% include "_flash.html" %}
+
+            <div class="demo-banner" id="demo-banner" role="status" {% if data_mode != 'demo' %}hidden{% endif %}>
+                <span class="badge badge--warning">DEMO</span>
+                <p><strong>Mode simulasi.</strong> Data di bawah berasal dari provider demo berlabel, bukan pengukuran live.</p>
+            </div>
+
+            <div class="global-error" id="global-error" role="alert" hidden>
+                <strong>Gagal memperbarui data.</strong>
+                <span id="global-error-message"></span>
+            </div>
+
+            <div class="dashboard-grid">
+                <section class="panel panel--span-7" id="panel-traffic" data-panel="traffic">
+                    <header class="panel__head">
+                        <div>
+                            <h2>Network Flow <span>/ 14 Fitur RF</span></h2>
+                            <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                        </div>
+                        <span class="badge badge--neutral" data-status>
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span data-status-text>Menunggu</span>
+                        </span>
+                    </header>
+                    <p class="panel__error" data-section-error hidden></p>
+                    <div class="panel__body">
+                        <div class="flow-features" data-flow-features hidden>
+                            <div class="flow-summary">
+                                <div>
+                                    <span>Event terakhir</span>
+                                    <strong data-flow-time>—</strong>
+                                </div>
+                                <div>
+                                    <span>Source</span>
+                                    <strong data-flow-source>—</strong>
+                                </div>
+                                <div>
+                                    <span>Target</span>
+                                    <strong data-flow-target>—</strong>
+                                </div>
+                                <div>
+                                    <span>Auth SSH</span>
+                                    <strong data-flow-auth>—</strong>
+                                </div>
+                            </div>
+                            <div class="flow-controls">
+                                <label class="flow-control">
+                                    <span>Fitur Random Forest (14)</span>
+                                    <select class="flow-select" data-feature-select aria-label="Pilih fitur Random Forest"></select>
+                                </label>
+                                <div class="flow-stat">
+                                    <span>Nilai terbaru</span>
+                                    <strong data-feature-current>—</strong>
+                                </div>
+                                <div class="flow-stat">
+                                    <span>Δ terakhir</span>
+                                    <strong data-feature-delta>—</strong>
+                                </div>
+                            </div>
+                            <div class="empty-state" data-feature-empty hidden>
+                                <p class="empty-state__title">Belum ada sampel fitur</p>
+                                <p class="empty-state__text">Fitur muncul setelah worker memproses autentikasi SSH.</p>
+                            </div>
+                            <p class="panel__note">
+                                Pilih fitur lewat dropdown. Grafik menampilkan nilainya per sampel autentikasi SSH,
+                                sehingga perubahan dapat dibaca dari naik/turunnya garis.
+                            </p>
+                        </div>
+                        <div class="chart-wrap chart-wrap--lg" data-traffic-chart>
+                            <canvas id="traffic-chart" role="img" aria-label="Grafik network traffic dan flow"></canvas>
+                            <div class="state-overlay" data-state hidden>
+                                <p class="state-overlay__title" data-state-title>Belum ada data</p>
+                                <p class="state-overlay__text" data-state-message></p>
+                            </div>
+                        </div>
+                        <div class="legend-note" data-traffic-legend>
+                            <span><i class="legend-swatch legend-swatch--in"></i>Inbound</span>
+                            <span><i class="legend-swatch legend-swatch--out"></i>Outbound</span>
+                            <span class="legend-note__unit">Satuan: Mbps</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel panel--span-5" id="panel-telegram" data-panel="telegram">
+                    <header class="panel__head">
+                        <div>
+                            <h2>Telegram Alerts</h2>
+                            <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                        </div>
+                        <span class="badge badge--neutral" data-status>
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span data-status-text>Menunggu</span>
+                        </span>
+                    </header>
+                    <p class="panel__error" data-section-error hidden></p>
+                    <div class="panel__body">
+                        <div class="telegram-summary">
+                            <div>
+                                <span>Status terakhir</span>
+                                <strong data-telegram-last>—</strong>
+                            </div>
+                            <div>
+                                <span>Terkirim</span>
+                                <strong data-telegram-delivered>0</strong>
+                            </div>
+                            <div>
+                                <span>Gagal</span>
+                                <strong data-telegram-failed>0</strong>
+                            </div>
+                            <button class="button button--ghost" id="telegram-test-btn" type="button">Kirim test alert</button>
+                        </div>
+                        <p class="inline-message" id="telegram-test-message" role="status" hidden></p>
+                        <ul class="alert-list" data-telegram-list aria-label="Riwayat notifikasi Telegram"></ul>
+                        <div class="empty-state" data-empty hidden>
+                            <p class="empty-state__title">Belum ada riwayat notifikasi</p>
+                            <p class="empty-state__text">Riwayat akan muncul setelah backend mencatat pengiriman alert.</p>
+                        </div>
+                        <p class="panel__note">Token bot tidak pernah dikirim ke browser.</p>
+                    </div>
+                </section>
+
+                <section class="panel panel--span-12" id="panel-qos" data-panel="qos">
+                    <header class="panel__head">
+                        <div>
+                            <h2>QoS Monitoring</h2>
+                            <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                        </div>
+                        <span class="badge badge--neutral" data-status>
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span data-status-text>Menunggu</span>
+                        </span>
+                    </header>
+                    <p class="panel__error" data-section-error hidden></p>
+                    <div class="panel__body">
+                        <div class="panel__toolbar qos-toolbar">
+                            <div class="qos-toolbar__actions">
+                                <button class="button button--primary" id="iperf-run-btn" type="button">
+                                    Jalankan tes iperf3
+                                </button>
+                                <button class="button button--ghost" id="delay-run-btn" type="button">
+                                    Ukur delay
+                                </button>
+                            </div>
+                            <span class="panel__counter" data-qos-run-state>Manual</span>
+                        </div>
+                        <p class="inline-message" id="qos-run-message" role="status" hidden></p>
+                        <div class="qos-grid">
+                            {% set qos_metrics = [
+                                ('delay', 'Delay', 'ms'),
+                                ('jitter', 'Jitter', 'ms'),
+                                ('packet_loss', 'Packet Loss', '%'),
+                                ('throughput', 'Throughput', 'Mbps')
+                            ] %}
+                            {% for key, label, unit in qos_metrics %}
+                                <article class="metric-card" data-metric="{{ key }}">
+                                    <header class="metric-card__head">
+                                        <div>
+                                            <h3>{{ label }}</h3>
+                                            <span class="metric-card__unit">Satuan: {{ unit }}</span>
+                                        </div>
+                                        <div class="metric-card__value">
+                                            <span data-value>—</span><span class="unit">{{ unit }}</span>
+                                        </div>
+                                    </header>
+                                    <div class="metric-card__body">
+                                        <div class="chart-wrap chart-wrap--small">
+                                            <canvas id="qos-{{ key }}-chart" role="img" aria-label="Grafik {{ label }}"></canvas>
+                                            <div class="state-overlay" data-state hidden>
+                                                <p class="state-overlay__title" data-state-title>Belum tersedia</p>
+                                                <p class="state-overlay__text" data-state-message></p>
+                                            </div>
+                                        </div>
+                                        <table class="stats-table" aria-label="Statistik {{ label }}">
+                                            <thead>
+                                                <tr>
+                                                    <th scope="col">Min</th>
+                                                    <th scope="col">Max</th>
+                                                    <th scope="col">Avg</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td data-stat="min">—</td>
+                                                    <td data-stat="max">—</td>
+                                                    <td data-stat="avg">—</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <p class="metric-card__error" data-metric-error hidden></p>
+                                </article>
+                            {% endfor %}
+                        </div>
+                        <p class="panel__meta panel__meta--test" data-qos-test>Metadata tes: —</p>
+                        <p class="panel__meta panel__meta--test" data-qos-delay>Pengukuran delay: —</p>
+                    </div>
+                </section>
+
+                <section class="panel panel--span-12" id="panel-resources" data-panel="resources">
+                    <header class="panel__head">
+                        <div>
+                            <h2>System Resource</h2>
+                            <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                        </div>
+                        <span class="badge badge--neutral" data-status>
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span data-status-text>Menunggu</span>
+                        </span>
+                    </header>
+                    <p class="panel__error" data-section-error hidden></p>
+                    <div class="panel__body">
+                        <div class="host-grid" data-hosts></div>
+                        <div class="empty-state" data-empty hidden>
+                            <p class="empty-state__title">Belum ada host yang dipantau</p>
+                            <p class="empty-state__text">Konfigurasi URL Glances untuk setiap VM pada backend.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel panel--span-12" id="panel-blocked" data-panel="blocked">
+                    <header class="panel__head">
+                        <div>
+                            <h2>Blocked IP</h2>
+                            <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                        </div>
+                        <span class="badge badge--neutral" data-status>
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span data-status-text>Menunggu</span>
+                        </span>
+                    </header>
+                    <p class="panel__error" data-section-error hidden></p>
+                    <div class="panel__body">
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">IP Address</th>
+                                        <th scope="col">Blocked At</th>
+                                        <th scope="col">Jail</th>
+                                        <th scope="col">Sumber</th>
+                                        <th scope="col">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody data-blocked-rows></tbody>
+                            </table>
+                        </div>
+                        <div class="empty-state" data-empty hidden>
+                            <p class="empty-state__title">Belum ada IP yang diblokir</p>
+                            <p class="empty-state__text">Daftar ini hanya memuat status yang dikonfirmasi Fail2Ban.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel panel--span-12" id="panel-attacks" data-panel="attacks">
+                    <header class="panel__head">
+                        <div>
+                            <h2>Attack History</h2>
+                            <p class="panel__meta">Sumber: <span data-source>—</span></p>
+                        </div>
+                        <span class="badge badge--neutral" data-status>
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span data-status-text>Menunggu</span>
+                        </span>
+                    </header>
+                    <p class="panel__error" data-section-error hidden></p>
+                    <div class="panel__body">
+                        <div class="panel__toolbar">
+                            <label class="sr-only" for="attack-filter">Filter attack history</label>
+                            <input class="input input--search" id="attack-filter" type="search"
+                                   placeholder="Cari IP, jenis serangan, atau model…" autocomplete="off">
+                            <span class="panel__counter" data-attack-count>0 kejadian</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Waktu</th>
+                                        <th scope="col">Source IP</th>
+                                        <th scope="col">Jenis Serangan</th>
+                                        <th scope="col">Detection</th>
+                                        <th scope="col">Model</th>
+                                        <th scope="col">Blocking</th>
+                                    </tr>
+                                </thead>
+                                <tbody data-attack-rows></tbody>
+                            </table>
+                        </div>
+                        <div class="empty-state" data-empty hidden>
+                            <p class="empty-state__title">Belum ada riwayat serangan</p>
+                            <p class="empty-state__text">Riwayat akan muncul ketika backend menyediakan data deteksi.</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <footer class="content__foot">
+                <span>Refresh otomatis setiap <strong id="poll-interval-label">{{ (poll_interval_ms / 1000)|round(1) }}</strong> detik.</span>
+                <span>Timestamp data ditampilkan dalam waktu lokal browser.</span>
+            </footer>
+        </main>
+    </div>
+</div>
+
+<template id="host-card-template">
+    <article class="host-card">
+        <header class="host-card__head">
+            <div>
+                <p class="host-card__eyebrow">Virtual Machine</p>
+                <h3 data-host-name>—</h3>
+            </div>
+            <span class="badge badge--neutral" data-host-status>
+                <span class="status-dot" aria-hidden="true"></span>
+                <span data-host-status-text>Menunggu</span>
+            </span>
+        </header>
+        <p class="host-card__error" data-host-error hidden></p>
+        <div class="host-card__grid">
+            <section class="metric-block">
+                <header class="metric-block__head">
+                    <span class="metric-block__label">CPU Usage</span>
+                    <strong><span data-cpu-value>—</span><span class="unit">%</span></strong>
+                </header>
+                <div class="chart-wrap chart-wrap--mini">
+                    <canvas data-cpu-chart role="img" aria-label="Grafik CPU usage"></canvas>
+                </div>
+                <div class="stats-inline">
+                    <span>Min <strong data-cpu-stat="min">—</strong></span>
+                    <span>Max <strong data-cpu-stat="max">—</strong></span>
+                    <span>Mean <strong data-cpu-stat="avg">—</strong></span>
+                </div>
+            </section>
+            <section class="metric-block">
+                <header class="metric-block__head">
+                    <span class="metric-block__label">Memory Usage</span>
+                    <strong><span data-memory-value>—</span><span class="unit">%</span></strong>
+                </header>
+                <div class="chart-wrap chart-wrap--mini">
+                    <canvas data-memory-chart role="img" aria-label="Grafik memory usage"></canvas>
+                </div>
+                <div class="stats-inline">
+                    <span>Min <strong data-memory-stat="min">—</strong></span>
+                    <span>Max <strong data-memory-stat="max">—</strong></span>
+                    <span>Mean <strong data-memory-stat="avg">—</strong></span>
+                </div>
+            </section>
+        </div>
+    </article>
+</template>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
