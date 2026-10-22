@@ -79,7 +79,7 @@ svg {
 
 ::selection {
     background: var(--accent);
-    color: var(--surface);
+    color: var(--accent-ink);
 }
 
 :focus-visible {
@@ -92,12 +92,15 @@ svg {
     top: var(--space-2);
     left: var(--space-2);
     z-index: 1000;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-pill);
     background: var(--accent);
-    color: var(--surface);
-    font-weight: 600;
+    color: var(--accent-ink);
+    font-size: var(--text-sm);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-decoration: none;
     transform: translateY(-160%);
     transition: transform var(--dur-fast) var(--ease);
 }
@@ -142,17 +145,17 @@ svg {
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--bg-1);
+    background: var(--bg-0);
 }
 
 ::-webkit-scrollbar-thumb {
-    border: 2px solid var(--bg-1);
-    border-radius: var(--radius);
-    background: var(--border-strong);
+    border: 2px solid var(--bg-0);
+    border-radius: var(--radius-pill);
+    background: #3a3a3a;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-faint);
+    background: #4d4d4d;
 }
 
 @media (prefers-reduced-motion: reduce) {

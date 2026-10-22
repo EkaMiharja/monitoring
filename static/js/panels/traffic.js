@@ -66,6 +66,7 @@ function renderFeatureChart() {
     const emptyText = empty?.querySelector(".empty-state__text");
     const currentNode = featureRoot.querySelector("[data-feature-current]");
     const deltaNode = featureRoot.querySelector("[data-feature-delta]");
+    const labelNode = featureRoot.querySelector("[data-feature-label]");
     const canvas = document.getElementById("traffic-chart");
     const feature =
         features.find((item) => item?.name === selectedFeature) ||
@@ -82,6 +83,17 @@ function renderFeatureChart() {
 
     setText(currentNode, formatFeatureValue(feature?.current));
     setText(deltaNode, formatDelta(delta));
+
+    const featureCount = Number.isFinite(featureSection?.feature_count)
+        ? featureSection.feature_count
+        : features.length;
+    const modelMatch = String(featureSection?.source || "").match(/^(.+?)\s+flow features$/i);
+    const modelLabel = modelMatch ? modelMatch[1].trim() : "";
+    setText(
+        labelNode,
+        modelLabel ? `Fitur ${modelLabel} (${featureCount})` : `Fitur flow (${featureCount})`,
+    );
+
     const deltaStat = deltaNode?.closest(".flow-stat");
     if (deltaStat) {
         deltaStat.classList.toggle("is-up", delta !== null && delta > 0);
@@ -110,7 +122,7 @@ function renderFeatureChart() {
         {
             label: feature?.name || "Fitur",
             data: points.map((point) => toNumber(point?.value)),
-            color: "#1f3a5f",
+            color: "#1ed760",
             fill: true,
         },
     ];
@@ -190,13 +202,13 @@ function renderDemoPanel(root, section) {
         {
             label: "Inbound",
             data: series.map((point) => toNumber(point.inbound)),
-            color: "#1f3a5f",
+            color: "#1ed760",
             fill: true,
         },
         {
             label: "Outbound",
             data: series.map((point) => toNumber(point.outbound)),
-            color: "#7a520f",
+            color: "#b3b3b3",
             fill: false,
         },
     ];

@@ -16,7 +16,7 @@ VM_SPECS = (
     {
         "id": "lightgbm-vm",
         "label_key": "GLANCES_LIGHTGBM_LABEL",
-        "role": "Resource host",
+        "role": "Network flow · QoS · resource",
     },
     {
         "id": "fail2ban-vm",
@@ -26,6 +26,13 @@ VM_SPECS = (
 )
 VM_IDS = tuple(spec["id"] for spec in VM_SPECS)
 DEFAULT_VM = "randomforest-vm"
+
+# Target pengukuran QoS per VM (host yang diukur ping & iperf3).
+# Diturunkan dari VM_HOST / RF_VM_HOST supaya hanya ada satu tempat per IP.
+QOS_TARGET_HOSTS = {
+    "lightgbm-vm": os.getenv("VM_HOST", "").strip(),
+    "randomforest-vm": os.getenv("RF_VM_HOST", "").strip(),
+}
 
 
 def _bool(value, default=False):
@@ -67,8 +74,13 @@ class Config:
     FAIL2BAN_API_URL = _text("FAIL2BAN_API_URL")
     ATTACK_HISTORY_API_URL = _text("ATTACK_HISTORY_API_URL")
     ATTACK_HISTORY_API_TOKEN = _text("ATTACK_HISTORY_API_TOKEN")
+    ATTACK_HISTORY_EXTRA_API_URLS = _text("ATTACK_HISTORY_EXTRA_API_URLS")
+    ATTACK_HISTORY_EXTRA_API_TOKENS = _text("ATTACK_HISTORY_EXTRA_API_TOKENS")
     FLOW_FEATURES_API_URL = _text("FLOW_FEATURES_API_URL")
     FLOW_FEATURES_API_TOKEN = _text("FLOW_FEATURES_API_TOKEN")
+    FLOW_FEATURES_LIGHTGBM_TOKEN = _text("FLOW_FEATURES_LIGHTGBM_TOKEN")
+    FLOW_FEATURES_RANDOM_FOREST_TOKEN = _text("FLOW_FEATURES_RANDOM_FOREST_TOKEN")
+    FLOW_FEATURES_FAIL2BAN_TOKEN = _text("FLOW_FEATURES_FAIL2BAN_TOKEN")
     FLOW_FEATURES_LIGHTGBM_URL = _text("FLOW_FEATURES_LIGHTGBM_URL")
     FLOW_FEATURES_RANDOM_FOREST_URL = _text("FLOW_FEATURES_RANDOM_FOREST_URL")
     FLOW_FEATURES_FAIL2BAN_URL = _text("FLOW_FEATURES_FAIL2BAN_URL")
@@ -82,6 +94,27 @@ class Config:
 
     QOS_HISTORY_POINTS = _int("QOS_HISTORY_POINTS", 240)
     QOS_VM = _text("QOS_VM", DEFAULT_VM)
+    QOS_VMS = _text("QOS_VMS")
+    QOS_TARGETS = QOS_TARGET_HOSTS
+    QOS_AUTO_ENABLED = _bool(os.getenv("QOS_AUTO_ENABLED"), False)
+    QOS_AUTO_INTERVAL_SECONDS = _int("QOS_AUTO_INTERVAL_SECONDS", 5)
+    QOS_AUTO_METRICS = _text("QOS_AUTO_METRICS", "ping,iperf3")
+    QOS_AUTO_IPERF3_DURATION_SECONDS = _int("QOS_AUTO_IPERF3_DURATION_SECONDS", 0)
+    QOS_AUTO_IPERF3_BANDWIDTH = _text("QOS_AUTO_IPERF3_BANDWIDTH")
+    QOS_AUTO_IPERF3_COOLDOWN_SECONDS = _int("QOS_AUTO_IPERF3_COOLDOWN_SECONDS", 2)
+    QOS_AUTO_IPERF3_PROTOCOL = _text("QOS_AUTO_IPERF3_PROTOCOL", "tcp")
+    QOS_AUTO_LOSS_ENABLED = _bool(os.getenv("QOS_AUTO_LOSS_ENABLED"), True)
+    QOS_AUTO_LOSS_DURATION_SECONDS = _int("QOS_AUTO_LOSS_DURATION_SECONDS", 2)
+    QOS_AUTO_LOSS_BANDWIDTH = _text("QOS_AUTO_LOSS_BANDWIDTH", "1M")
+    QOS_AUTO_LOSS_INTERVAL_SECONDS = _int("QOS_AUTO_LOSS_INTERVAL_SECONDS", 10)
+    QOS_AUTO_LOSS_PORT = _int("QOS_AUTO_LOSS_PORT", 5202)
+    # Sumber metrik QoS: "vm" = angka hasil probe in-VM (link yang dipakai ML),
+    # "laptop" = probe dari laptop ke VM lewat jaringan lab.
+    QOS_SOURCE_MODE = _text("QOS_SOURCE_MODE", "vm")
+    # Probe dari laptop hanya dipakai saat sumber metrik adalah laptop.
+    QOS_LOCAL_PROBE = _bool(os.getenv("QOS_LOCAL_PROBE"), False)
+    # Interval probe in-VM (detik), mengikuti timer qos-probe.timer di VM.
+    QOS_PROBE_INTERVAL_SECONDS = _int("QOS_PROBE_INTERVAL_SECONDS", 10)
 
     IPERF3_ENABLED = _bool(os.getenv("IPERF3_ENABLED"), False)
     IPERF3_RESULT_URL = _text("IPERF3_RESULT_URL")
@@ -93,6 +126,7 @@ class Config:
     IPERF3_OMIT_SECONDS = _int("IPERF3_OMIT_SECONDS", 1)
     IPERF3_TEST_PROTOCOL = _text("IPERF3_TEST_PROTOCOL", "udp")
     IPERF3_TEST_DURATION_SECONDS = _int("IPERF3_TEST_DURATION_SECONDS", 10)
+    IPERF3_TIMEOUT_MARGIN_SECONDS = _int("IPERF3_TIMEOUT_MARGIN_SECONDS", 30)
     IPERF3_TEST_INTERVAL_SECONDS = _int("IPERF3_TEST_INTERVAL_SECONDS", 60)
     DELAY_API_URL = _text("DELAY_API_URL")
     PING_BINARY = _text("PING_BINARY", "ping")

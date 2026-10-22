@@ -15,6 +15,8 @@ import math
 import os
 import sqlite3
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,6 +36,7 @@ FEATURE_NAMES = (
     "Flow Duration",
     "Tot Fwd Pkts",
     "Tot Bwd Pkts",
+    "TotLen Fwd Pkts",
     "TotLen Bwd Pkts",
     "Flow Pkts/s",
     "Flow IAT Mean",
@@ -42,8 +45,10 @@ FEATURE_NAMES = (
     "Bwd IAT Mean",
     "Fwd Pkts/s",
     "Bwd Pkts/s",
-    "SYN Flag Cnt",
     "ACK Flag Cnt",
+    "Init Fwd Win Byts",
+    "Init Bwd Win Byts",
+    "Fwd Seg Size Min",
 )
 
 
@@ -131,7 +136,7 @@ def _feature_float(value):
 
 
 def read_feature_rows(path):
-    """Read the 14 model inputs from one processed feature CSV."""
+    """Read the 17 model inputs from one processed feature CSV."""
     path = Path(path)
     rows = []
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -313,6 +318,139 @@ def fetch_attacks(db_path, limit=DEFAULT_LIMIT, model=DEFAULT_MODEL):
     return items
 
 
+
+# ============================================================
+# QOS PROBE (READ-ONLY)
+# ============================================================
+
+QOS_RESULT_PATH = BASE_DIR / "qos" / "last.json"
+QOS_CACHE_SECONDS = 5
+QOS_HISTORY_PATH = BASE_DIR / "qos" / "history.json"
+_QOS_CACHE_LOCK = threading.Lock()
+QOS_NET_INTERFACES = ("enp0s8", "enp0s3")
+QOS_CAPTURE_DIR = BASE_DIR / "capture" / "raw"
+
+
+def read_qos_probe():
+    """Baca hasil probe QoS in-VM (satu file JSON kecil)."""
+    try:
+        with QOS_RESULT_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def read_loadavg():
+    """Rata-rata beban 1/5/15 menit."""
+    try:
+        with open("/proc/loadavg", "r", encoding="utf-8") as handle:
+            fields = handle.read().split()
+    except OSError:
+        return None
+    if not fields:
+        return None
+    try:
+        return {
+            "load_1m": float(fields[0]),
+            "load_5m": float(fields[1]),
+            "load_15m": float(fields[2]),
+        }
+    except (IndexError, ValueError):
+        return None
+
+
+def read_network_counters():
+    """Counter per interface (rx/tx byte, error, drop)."""
+    result = {}
+    try:
+        with open("/proc/net/dev", "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return result
+    for line in lines[2:]:
+        if ":" not in line:
+            continue
+        name, _, values = line.partition(":")
+        name = name.strip()
+        if name not in QOS_NET_INTERFACES:
+            continue
+        parts = values.split()
+        if len(parts) < 16:
+            continue
+        try:
+            result[name] = {
+                "rx_bytes": int(parts[0]),
+                "rx_packets": int(parts[1]),
+                "rx_errors": int(parts[2]),
+                "rx_dropped": int(parts[3]),
+                "tx_bytes": int(parts[8]),
+                "tx_packets": int(parts[9]),
+                "tx_errors": int(parts[10]),
+                "tx_dropped": int(parts[11]),
+            }
+        except ValueError:
+            continue
+    return result
+
+
+def read_capture_backlog():
+    """Jumlah dan umur file PCAP yang menunggu diproses pipeline ML."""
+    try:
+        files = list(QOS_CAPTURE_DIR.glob("*.pcap"))
+    except OSError:
+        return {"files": 0, "oldest_age_seconds": None}
+    if not files:
+        return {"files": 0, "oldest_age_seconds": None}
+    oldest = 0.0
+    now = datetime.now(timezone.utc).timestamp()
+    for path in files:
+        try:
+            age = now - path.stat().st_mtime
+        except OSError:
+            continue
+        if age > oldest:
+            oldest = age
+    return {"files": len(files), "oldest_age_seconds": round(oldest, 1)}
+
+
+
+def read_qos_history():
+    """Baca histori probe QoS in-VM (array of dict, read-only)."""
+    try:
+        with QOS_HISTORY_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+# Cache status QoS: /api/qos tidak perlu membaca file & /proc setiap request.
+_QOS_CACHE = {"at": 0.0, "payload": None}
+
+
+def collect_qos_status():
+    """Kumpulkan status pipeline & beban server (ringan, tanpa query berat)."""
+    now = time.monotonic()
+    with _QOS_CACHE_LOCK:
+        cached = _QOS_CACHE["payload"]
+        if cached is not None and (now - _QOS_CACHE["at"]) < QOS_CACHE_SECONDS:
+            return cached
+    payload = {
+        "probe": read_qos_probe(),
+        "history": read_qos_history(),
+        "load": read_loadavg(),
+        "network": read_network_counters(),
+        "capture_backlog": read_capture_backlog(),
+    }
+    with _QOS_CACHE_LOCK:
+        _QOS_CACHE["at"] = now
+        _QOS_CACHE["payload"] = payload
+    return payload
+
 class RFRequestHandler(BaseHTTPRequestHandler):
     server_version = "RFReadOnlyAPI/1.0"
     sys_version = ""
@@ -358,6 +496,16 @@ class RFRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/health":
             self._health()
+            return
+        if parsed.path == "/api/qos":
+            if not self._authorized():
+                self._send_json(
+                    401,
+                    {"error": "unauthorized"},
+                    {"WWW-Authenticate": 'Bearer realm="qos-api"'},
+                )
+                return
+            self._send_json(200, collect_qos_status())
             return
         if parsed.path not in {"/api/attacks", "/api/features"}:
             self._send_json(404, {"error": "not_found"})

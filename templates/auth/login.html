@@ -7,33 +7,6 @@
 {% block layout %}
 <main class="auth-shell" id="main">
     <div class="auth-frame">
-        <aside class="auth-aside">
-            <div class="auth-brand">
-                <span class="brand-mark brand-mark--lg">S</span>
-                <div>
-                    <strong>{{ app_name }}</strong>
-                    <span>Monitoring SSH Brute Force</span>
-                </div>
-            </div>
-
-            <div class="auth-aside__copy">
-                <p class="auth-kicker">Access control</p>
-                <h1>Monitoring SSH brute force.</h1>
-                <p>
-                    Konsol ini menyatukan telemetri VM dan feed keamanan selama pengujian.
-                    Masuk untuk membaca snapshot terbaru.
-                </p>
-            </div>
-
-            <ul class="auth-facts">
-                <li><span>Scope</span><strong>Network flow, QoS, resource VM</strong></li>
-                <li><span>Feed</span><strong>Fail2Ban, attack history, Telegram</strong></li>
-                <li><span>Mode</span><strong>{{ data_mode|upper }}</strong></li>
-            </ul>
-
-            <p class="auth-aside__foot">Akses hanya untuk akun terdaftar. Sesi berakhir otomatis.</p>
-        </aside>
-
         <section class="auth-panel">
             <header class="auth-panel__head">
                 <p class="auth-kicker">Authentication</p>

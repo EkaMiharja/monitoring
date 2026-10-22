@@ -8,6 +8,7 @@ from config import DEFAULT_VM, VM_IDS, Config, VM_SPECS
 from security import get_csrf_token
 from services.providers.live import LiveProvider
 from services.providers.mock import MockProvider
+from services.qos_scheduler import QosScheduler
 from services.telegram import TelegramService
 
 
@@ -36,6 +37,21 @@ def create_app(test_config=None):
         runner = getattr(provider, attribute, None)
         if runner is not None:
             app.extensions[name] = runner
+
+    scheduler = QosScheduler(
+        app.config,
+        runners_by_vm=getattr(provider, "qos_runners", {}) or {},
+    )
+    app.extensions["qos_scheduler"] = scheduler
+    app.extensions["qos_runners"] = getattr(provider, "qos_runners", {}) or {}
+    provider.qos_scheduler = scheduler
+    if (
+        app.config["DATA_MODE"] == "live"
+        and scheduler.enabled
+        and app.config.get("QOS_LOCAL_PROBE", False)
+        and not app.config.get("TESTING")
+    ):
+        scheduler.start()
 
     @app.context_processor
     def inject_globals():
@@ -67,6 +83,8 @@ def create_app(test_config=None):
         qos_vm = app.config.get("QOS_VM") or DEFAULT_VM
         if qos_vm not in VM_IDS:
             qos_vm = DEFAULT_VM
+        provider = app.extensions["monitoring_provider"]
+        qos_vms = list(getattr(provider, "qos_targets", {}) or {})
         return render_template(
             "dashboard/index.html",
             username=session.get("username", "User"),
@@ -74,6 +92,7 @@ def create_app(test_config=None):
             vm_options=vm_options,
             default_vm=active_vm,
             qos_vm=qos_vm,
+            qos_vms=qos_vms,
             active_page="overview",
             page_name="Overview",
             overview_url=url_for("dashboard", vm=active_vm),

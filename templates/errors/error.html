@@ -7,27 +7,6 @@
 {% block layout %}
 <main class="auth-shell" id="main">
     <div class="auth-frame">
-        <aside class="auth-aside">
-            <div class="auth-brand">
-                <span class="brand-mark brand-mark--lg">S</span>
-                <div>
-                    <strong>{{ app_name }}</strong>
-                    <span>Monitoring SSH Brute Force</span>
-                </div>
-            </div>
-
-            <div class="auth-aside__copy">
-                <p class="auth-kicker">Error {{ code }}</p>
-                <h1>Permintaan tidak selesai.</h1>
-                <p>
-                    Konsol gagal memproses permintaan ini. Kembali ke dashboard atau
-                    masuk ulang untuk melanjutkan pemantauan.
-                </p>
-            </div>
-
-            <p class="auth-aside__foot">Jika masalah berulang, periksa log backend Flask.</p>
-        </aside>
-
         <section class="auth-panel">
             <div class="auth-card--error">
                 <p class="auth-kicker">Error {{ code }}</p>

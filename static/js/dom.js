@@ -33,6 +33,7 @@ const PANEL_TONES = {
     warning: "warning",
     delivered: "success",
     failed: "error",
+    danger: "danger",
 };
 
 const PANEL_LABELS = {
@@ -64,9 +65,19 @@ export function makeBadge(status, label) {
 
 export function applyBadge(badge, status, label) {
     if (!badge) return;
-    badge.className = `badge badge--${badgeTone(status)}`;
+    const tone = badgeTone(status);
+    const isLive = tone === "ok";
+    const isPlain = tone === "empty";
+    const isWaiting = ["neutral", "warning", "error", "unavailable"].includes(tone);
+    badge.className = isLive ? "status-live" : isPlain ? "status-text" : `badge badge--${tone}`;
+    const loader = badge.querySelector(".loader");
+    if (loader) loader.hidden = isLive || isPlain;
     const textNode = badge.querySelector("[data-status-text]") || badge.querySelector("span:last-child");
-    if (textNode) textNode.textContent = label || statusLabel(status);
+    if (!textNode) return;
+    if (isLive) textNode.textContent = "Live";
+    else if (isWaiting) textNode.textContent = "";
+    else textNode.textContent = label || statusLabel(status);
+    textNode.hidden = textNode.textContent === "";
 }
 
 export function debounce(callback, wait = 160) {

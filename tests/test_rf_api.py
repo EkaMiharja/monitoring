@@ -162,7 +162,7 @@ def test_fetch_features_returns_14_ordered_features(tmp_path):
     assert items[0]["auth_result"] == "FAILED"
     assert items[0]["detected_at"] == "2026-10-20T07:19:40Z"
     assert list(items[0]["features"]) == list(rf_api.FEATURE_NAMES)
-    assert len(items[0]["features"]) == 14
+    assert len(items[0]["features"]) == 17
 
 
 def test_features_http_endpoint_requires_token(tmp_path):
@@ -199,10 +199,10 @@ def test_features_http_endpoint_requires_token(tmp_path):
         with urllib.request.urlopen(request, timeout=3) as response:
             assert response.status == 200
             payload = json.loads(response.read().decode("utf-8"))
-        assert payload["feature_count"] == 14
+        assert payload["feature_count"] == 17
         assert payload["features"] == list(rf_api.FEATURE_NAMES)
         assert len(payload["items"]) == 1
-        assert len(payload["items"][0]["features"]) == 14
+        assert len(payload["items"][0]["features"]) == 17
     finally:
         server.shutdown()
         server.server_close()

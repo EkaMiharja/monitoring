@@ -84,11 +84,3 @@ async function postAction(url, fallbackMessage) {
     }
     return payload;
 }
-
-export function runIperfTest() {
-    return postAction("/api/iperf3/run", "Gagal memulai tes iperf3");
-}
-
-export function runDelayTest() {
-    return postAction("/api/delay/run", "Gagal memulai pengukuran delay");
-}

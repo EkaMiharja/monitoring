@@ -76,6 +76,7 @@ def overview():
         "id": qos_vm,
         "label": current_app.config.get(VM_LABEL_KEYS.get(qos_vm, ""), qos_vm),
     }
+    payload["qos_vms"] = sorted(getattr(provider, "qos_targets", {}) or {})
     payload["generated_at"] = iso(utc_now())
     payload["data_mode"] = provider.data_mode
     payload["poll_interval_ms"] = current_app.config["POLL_INTERVAL_MS"]
@@ -100,13 +101,25 @@ def telegram_test():
     return jsonify(ok=False, record=record, message=record.get("detail", "Test alert gagal.")), 502
 
 
+def _qos_runners_for(vm):
+    """Return the runner pair of one VM (primary QoS VM bila vm tidak diisi)."""
+    runners = current_app.extensions.get("qos_runners") or {}
+    if vm:
+        return runners.get(vm)
+    for pair in runners.values():
+        return pair
+    return None
+
+
 @bp.post("/iperf3/run")
 @login_required
 def iperf3_run():
     csrf_protect()
-    runner = current_app.extensions.get("iperf3_runner")
+    vm = (request.args.get("vm") or "").strip()
+    pair = _qos_runners_for(vm)
+    runner = pair["iperf3"] if pair else None
     if runner is None:
-        return jsonify(ok=False, message="Runner iperf3 tidak tersedia pada mode data ini."), 409
+        return jsonify(ok=False, message="QoS belum dikonfigurasi untuk VM ini."), 409
     if not runner.start():
         if runner.running:
             return jsonify(ok=False, running=True, message="Pengujian iperf3 masih berjalan."), 409
@@ -129,9 +142,11 @@ def iperf3_run():
 @login_required
 def delay_run():
     csrf_protect()
-    runner = current_app.extensions.get("delay_runner")
-    if runner is None:
-        return jsonify(ok=False, message="Runner delay tidak tersedia pada mode data ini."), 409
+    vm = (request.args.get("vm") or "").strip()
+    pair = _qos_runners_for(vm)
+    if pair is None:
+        return jsonify(ok=False, message="QoS belum dikonfigurasi untuk VM ini."), 409
+    runner = pair["ping"]
     if not runner.start():
         if runner.running:
             return jsonify(ok=False, running=True, message="Pengukuran delay masih berjalan."), 409

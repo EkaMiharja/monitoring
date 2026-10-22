@@ -23,7 +23,12 @@ let lastGeneratedAt = null;
 function setConnection(state, text) {
     if (!connection) return;
     connection.dataset.connection = state;
-    setText(connectionText, text);
+    const isLive = state === "ok";
+    const isWaiting = state !== "ok";
+    const loader = connection.querySelector(".loader");
+    if (loader) loader.hidden = isLive;
+    setText(connectionText, isLive ? "Live" : isWaiting ? "" : text);
+    if (connectionText) connectionText.hidden = connectionText.textContent === "";
 }
 
 function showGlobalError(message) {

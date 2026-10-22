@@ -1,0 +1,12 @@
+[Unit]
+Description=Jalankan probe QoS in-VM setiap 10 detik
+Requires=qos-probe.service
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=qos-probe.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=iperf3 server TCP (build lokal /usr/local, versi 3.22)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+WorkingDirectory=/home/server
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/iperf3 -s -p 5201 --idle-timeout 60
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

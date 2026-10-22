@@ -92,12 +92,15 @@ def test_live_mode_reports_unavailable_sources(tmp_path, client):
             "IPERF3_SERVER_HOST": "",
             "FAIL2BAN_API_URL": "",
             "ATTACK_HISTORY_API_URL": "",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
             "FLOW_FEATURES_API_URL": "",
             "GLANCES_LIGHTGBM_URL": "",
             "GLANCES_RANDOM_FOREST_URL": "",
             "GLANCES_FAIL2BAN_URL": "",
             "DELAY_API_URL": "",
             "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
         }
     )
     live_client = app.test_client()
@@ -128,6 +131,8 @@ def test_live_mode_filters_one_vm_and_reports_missing_flow_source(tmp_path):
             "IPERF3_SERVER_HOST": "",
             "FAIL2BAN_API_URL": "",
             "ATTACK_HISTORY_API_URL": "",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
             "FLOW_FEATURES_API_URL": "http://rf.test/api/features",
             "FLOW_FEATURES_LIGHTGBM_URL": "",
             "GLANCES_LIGHTGBM_URL": "",
@@ -135,7 +140,9 @@ def test_live_mode_filters_one_vm_and_reports_missing_flow_source(tmp_path):
             "GLANCES_FAIL2BAN_URL": "",
             "DELAY_API_URL": "",
             "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
             "QOS_VM": "randomforest-vm",
+            "QOS_AUTO_ENABLED": False,
         }
     )
     live_client = app.test_client()
@@ -200,6 +207,8 @@ def test_live_attacks_sends_token_and_maps_rf_payload(monkeypatch, tmp_path):
             "IPERF3_SERVER_HOST": "",
             "FAIL2BAN_API_URL": "",
             "ATTACK_HISTORY_API_URL": "http://rf.test/api/attacks",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
             "FLOW_FEATURES_API_URL": "",
             "ATTACK_HISTORY_API_TOKEN": "token-123",
             "GLANCES_LIGHTGBM_URL": "",
@@ -207,6 +216,7 @@ def test_live_attacks_sends_token_and_maps_rf_payload(monkeypatch, tmp_path):
             "GLANCES_FAIL2BAN_URL": "",
             "DELAY_API_URL": "",
             "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
         }
     )
     live_client = app.test_client()
@@ -304,6 +314,8 @@ def test_live_flow_features_uses_token_and_builds_feature_series(monkeypatch, tm
             "IPERF3_SERVER_HOST": "",
             "FAIL2BAN_API_URL": "",
             "ATTACK_HISTORY_API_URL": "http://rf.test/api/attacks",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
             "ATTACK_HISTORY_API_TOKEN": "token-123",
             "FLOW_FEATURES_API_URL": "http://rf.test/api/features",
             "GLANCES_LIGHTGBM_URL": "",
@@ -311,6 +323,7 @@ def test_live_flow_features_uses_token_and_builds_feature_series(monkeypatch, tm
             "GLANCES_FAIL2BAN_URL": "",
             "DELAY_API_URL": "",
             "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
         }
     )
     live_client = app.test_client()
@@ -335,3 +348,272 @@ def test_live_flow_features_uses_token_and_builds_feature_series(monkeypatch, tm
     assert first["previous"] == 1.0
     assert first["delta"] == 1.0
     assert [point["value"] for point in first["series"]] == [1.0, 2.0]
+
+
+def test_live_flow_features_use_per_vm_token(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    names = [f"Feature {index}" for index in range(1, 18)]
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    feature_payload = {
+        "source": "LightGBM flow features",
+        "features": names,
+        "items": [
+            {
+                "detected_at": "2026-10-22T04:36:01Z",
+                "source_ip": "192.168.56.1",
+                "target": "192.168.56.103:22",
+                "auth_result": "FAILED",
+                "features": {name: 3.0 for name in names},
+            }
+        ],
+    }
+    attack_payload = {
+        "source": "Random Forest (RF)",
+        "items": [
+            {
+                "detected_at": "2026-10-20T04:36:01Z",
+                "source_ip": "192.168.56.1",
+                "target": "192.168.56.103:22",
+                "attack_type": "SSH Brute Force",
+                "detection": "Malicious",
+                "model": "RandomForestClassifier",
+                "blocking_status": None,
+            }
+        ],
+    }
+
+    def fake_get(url, timeout, headers):
+        calls.append((url, headers))
+        if url.endswith("/api/features"):
+            return FakeResponse(feature_payload)
+        return FakeResponse(attack_payload)
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-features-vm.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "ATTACK_HISTORY_API_URL": "http://rf.test/api/attacks",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
+            "ATTACK_HISTORY_API_TOKEN": "token-rf",
+            "FLOW_FEATURES_API_URL": "http://rf.test/api/features",
+            "FLOW_FEATURES_LIGHTGBM_URL": "http://lgbm.test/api/features",
+            "FLOW_FEATURES_LIGHTGBM_TOKEN": "token-lgbm",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
+        }
+    )
+    live_client = app.test_client()
+    with live_client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "live-tester"
+
+    payload = live_client.get("/api/overview?vm=lightgbm-vm").get_json()
+
+    assert (
+        "http://lgbm.test/api/features",
+        {"Accept": "application/json", "Authorization": "Bearer token-lgbm"},
+    ) in calls
+    traffic = payload["traffic"]
+    assert traffic["status"] == "ok"
+    assert traffic["feature_count"] == 17
+    assert [feature["name"] for feature in traffic["features"]] == names
+
+
+def test_live_attacks_merges_multiple_sources(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    rf_payload = {
+        "source": "Random Forest (RF)",
+        "items": [
+            {
+                "detected_at": "2026-10-22T04:36:01Z",
+                "source_ip": "192.168.56.1",
+                "target": "192.168.56.103:22",
+                "attack_type": "SSH Brute Force",
+                "detection": "Malicious",
+                "model": "RandomForestClassifier",
+                "blocking_status": None,
+            }
+        ],
+    }
+    lgbm_payload = {
+        "source": "LightGBM",
+        "items": [
+            {
+                "detected_at": "2026-10-22T05:10:29Z",
+                "source_ip": "192.168.56.101",
+                "target": "192.168.56.102:22",
+                "attack_type": "SSH Brute Force",
+                "detection": "Malicious",
+                "model": "LightGBM",
+                "blocking_status": None,
+            }
+        ],
+    }
+
+    def fake_get(url, timeout, headers):
+        calls.append((url, headers))
+        if url.endswith("/api/attacks") and "lgbm.test" in url:
+            return FakeResponse(lgbm_payload)
+        return FakeResponse(rf_payload)
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-attacks-multi.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "ATTACK_HISTORY_API_URL": "http://rf.test/api/attacks",
+            "ATTACK_HISTORY_API_TOKEN": "token-rf",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "http://lgbm.test/api/attacks",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "token-lgbm",
+            "FLOW_FEATURES_API_URL": "",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
+        }
+    )
+    live_client = app.test_client()
+    with live_client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "live-tester"
+
+    payload = live_client.get("/api/overview").get_json()
+
+    assert (
+        "http://rf.test/api/attacks",
+        {"Accept": "application/json", "Authorization": "Bearer token-rf"},
+    ) in calls
+    assert (
+        "http://lgbm.test/api/attacks",
+        {"Accept": "application/json", "Authorization": "Bearer token-lgbm"},
+    ) in calls
+
+    attacks = payload["attacks"]
+    assert attacks["status"] == "ok"
+    assert attacks["source"] == "Random Forest (RF) + LightGBM"
+    assert [item["model"] for item in attacks["items"]] == ["LightGBM", "RandomForestClassifier"]
+    assert attacks["items"][0]["detected_at"] == "2026-10-22T05:10:29Z"
+    assert attacks["warnings"] == []
+
+
+def test_live_attacks_reports_partial_source_failure(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    lgbm_payload = {
+        "source": "LightGBM",
+        "items": [
+            {
+                "detected_at": "2026-10-22T05:10:29Z",
+                "source_ip": "192.168.56.101",
+                "target": "192.168.56.102:22",
+                "attack_type": "SSH Brute Force",
+                "detection": "Malicious",
+                "model": "LightGBM",
+                "blocking_status": None,
+            }
+        ],
+    }
+
+    def fake_get(url, timeout, headers):
+        if "rf.test" in url:
+            raise live_module.requests.ConnectionError("tunnel mati")
+        return FakeResponse(lgbm_payload)
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-attacks-partial.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "ATTACK_HISTORY_API_URL": "http://rf.test/api/attacks",
+            "ATTACK_HISTORY_API_TOKEN": "token-rf",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "http://lgbm.test/api/attacks",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "token-lgbm",
+            "FLOW_FEATURES_API_URL": "",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
+        }
+    )
+    live_client = app.test_client()
+    with live_client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "live-tester"
+
+    payload = live_client.get("/api/overview").get_json()
+
+    attacks = payload["attacks"]
+    assert attacks["status"] == "ok"
+    assert attacks["source"] == "LightGBM · 1 sumber gagal"
+    assert [item["model"] for item in attacks["items"]] == ["LightGBM"]
+    assert len(attacks["warnings"]) == 1
+    assert attacks["warnings"][0]["url"] == "http://rf.test/api/attacks"

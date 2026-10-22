@@ -1,7 +1,7 @@
 import { formatNumber } from "./format.js";
 
-const TICK_COLOR = "#6b716a";
-const GRID_COLOR = "rgba(23, 26, 24, 0.08)";
+const TICK_COLOR = "#8a8a8a";
+const GRID_COLOR = "rgba(255, 255, 255, 0.07)";
 const DATA_FONT = "'Montserrat', 'Segoe UI', sans-serif";
 
 function withAlpha(hex, alpha) {
@@ -22,18 +22,18 @@ function options(datasets, unit) {
             legend: {
                 display: datasets.length > 1,
                 labels: {
-                    color: "#50564f",
+                    color: "#b3b3b3",
                     boxWidth: 14,
                     boxHeight: 3,
                     font: { size: 10 },
                 },
             },
             tooltip: {
-                backgroundColor: "#fbfaf6",
-                borderColor: "#d8d4c9",
+                backgroundColor: "#282828",
+                borderColor: "rgba(255, 255, 255, 0.12)",
                 borderWidth: 1,
-                titleColor: "#171a18",
-                bodyColor: "#50564f",
+                titleColor: "#ffffff",
+                bodyColor: "#b3b3b3",
                 padding: 10,
                 titleFont: { family: DATA_FONT, size: 11, weight: "500" },
                 bodyFont: { family: DATA_FONT, size: 11 },
@@ -83,7 +83,7 @@ export function createChart(canvas, datasets, unit) {
         label: dataset.label,
         data: dataset.data,
         borderColor: dataset.color,
-        backgroundColor: dataset.fill ? withAlpha(dataset.color, 0.14) : dataset.color,
+        backgroundColor: dataset.fill ? withAlpha(dataset.color, 0.08) : dataset.color,
         fill: Boolean(dataset.fill),
         borderWidth: 2,
     }));

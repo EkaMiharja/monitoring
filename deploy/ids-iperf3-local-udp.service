@@ -1,0 +1,21 @@
+[Unit]
+Description=iperf3 server UDP untuk jitter & packet loss (port terpisah)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+WorkingDirectory=/home/server
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Port 5202 dipisah dari 5201 (TCP) agar sesi UDP yang nyangkut
+# tidak membuat server TCP ikut melapor "the server is busy".
+# Catatan: flag -u hanya boleh di sisi client; server cukup -p.
+ExecStart=/usr/local/bin/iperf3 -s -p 5202 --idle-timeout 60
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

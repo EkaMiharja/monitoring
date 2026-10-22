@@ -1,4 +1,4 @@
-import { fetchOverview, runDelayTest, runIperfTest, sendTelegramTest } from "./api.js";
+import { fetchOverview, sendTelegramTest } from "./api.js";
 import { setHidden, setText } from "./dom.js";
 import { formatDateTime } from "./format.js";
 import { Poller } from "./polling.js";
@@ -20,23 +20,29 @@ const demoBanner = document.getElementById("demo-banner");
 const refreshButton = document.getElementById("refresh-button");
 const telegramButton = document.getElementById("telegram-test-btn");
 const telegramMessage = document.getElementById("telegram-test-message");
-const iperfRunButton = document.getElementById("iperf-run-btn");
-const delayRunButton = document.getElementById("delay-run-btn");
-const qosRunMessage = document.getElementById("qos-run-message");
 const qosRunState = document.querySelector("[data-qos-run-state]");
 const vmSelect = document.getElementById("vm-select");
 
 let lastGeneratedAt = null;
 let demoMode = demoBanner ? !demoBanner.hidden : false;
-let qosBusy = false;
-let runTimer = null;
-let qosVmId = shell?.dataset.qosVm || "";
 let currentVm = vmSelect?.value || shell?.dataset.defaultVm || "";
+let qosAuto = null;
+let qosProbeInterval = null;
+
+function qosStateLabel() {
+    const interval = Number(qosProbeInterval) || Number(qosAuto?.interval_seconds) || 0;
+    return interval ? `Otomatis · ${interval} dtk` : "Otomatis";
+}
 
 function setConnection(state, text) {
     if (!connection) return;
     connection.dataset.connection = state;
-    setText(connectionText, text);
+    const isLive = state === "ok";
+    const isWaiting = state !== "ok";
+    const loader = connection.querySelector(".loader");
+    if (loader) loader.hidden = isLive;
+    setText(connectionText, isLive ? "Live" : isWaiting ? "" : text);
+    if (connectionText) connectionText.hidden = connectionText.textContent === "";
 }
 
 function showGlobalError(message) {
@@ -51,101 +57,29 @@ function hideGlobalError() {
 function updateDemoBanner(mode) {
     setHidden(demoBanner, mode !== "demo");
     demoMode = mode === "demo";
-    syncQosButtons();
-}
-
-function syncQosButtons() {
-    const qosMismatch = Boolean(qosVmId) && currentVm !== qosVmId;
-    [iperfRunButton, delayRunButton].forEach((button) => {
-        if (!button) return;
-        button.disabled = qosBusy || demoMode || qosMismatch;
-        if (demoMode) {
-            button.title = "Hanya tersedia pada mode live.";
-        } else if (qosMismatch) {
-            button.title = `QoS hanya diukur untuk ${qosVmId}.`;
-        } else {
-            button.removeAttribute("title");
-        }
-    });
 }
 
 function switchVm(vm) {
     if (!vm || vm === currentVm) return;
     currentVm = vm;
 
-    if (runTimer) {
-        clearInterval(runTimer);
-        runTimer = null;
-        setQosBusy(false);
-        setQosMessage("Pemantauan tes dihentikan karena VM berubah.");
-    }
-
     const url = new URL(window.location.href);
     url.searchParams.set("vm", vm);
     window.history.replaceState(null, "", url);
 
-    syncQosButtons();
     poller.kick();
-}
-
-function setQosMessage(text, kind) {
-    if (!qosRunMessage) return;
-    qosRunMessage.textContent = text || "";
-    qosRunMessage.className = `inline-message${kind ? ` inline-message--${kind}` : ""}`;
-    qosRunMessage.hidden = !text;
-}
-
-function setQosBusy(busy, label) {
-    qosBusy = busy;
-    syncQosButtons();
-    if (qosRunState) qosRunState.textContent = busy ? label : "Manual";
-}
-
-function watchQosRun(estimatedSeconds) {
-    if (runTimer) clearInterval(runTimer);
-    const deadline = Date.now() + (Number(estimatedSeconds) + 6) * 1000;
-    runTimer = setInterval(async () => {
-        try {
-            await poller.refresh();
-        } catch {
-        }
-        const qosPanel = document.querySelector('[data-panel="qos"]');        const status = qosPanel?.dataset.qosStatus || "";
-        const finished = status === "success" || status === "failed";
-        if (!finished && Date.now() < deadline) return;
-
-        clearInterval(runTimer);
-        runTimer = null;
-        setQosBusy(false);
-        if (status === "success") {
-            setQosMessage("Pengujian selesai. Grafik QoS diperbarui.", "success");
-        } else if (status === "failed") {
-            setQosMessage("Pengujian gagal. Lihat detail pada panel QoS.", "error");
-        } else {
-            setQosMessage("Pengujian belum menghasilkan data. Coba lagi.", "error");
-        }
-    }, 2000);
-}
-
-async function triggerQos(action, initMessage) {
-    if (qosBusy || demoMode) return;
-    setQosBusy(true, "Menjalankan…");
-    setQosMessage(initMessage);
-    try {
-        const result = await action();
-        const seconds = Number(result?.estimated_seconds) || 15;
-        setQosMessage(`Pengujian berjalan (± ${Math.round(seconds)} detik)…`);
-        watchQosRun(seconds);
-    } catch (error) {
-        setQosBusy(false);
-        setQosMessage(error?.message || "Gagal memulai pengujian.", "error");
-    }
 }
 
 function applyOverview(data) {
     lastGeneratedAt = data.generated_at || null;
-    if (data.qos_vm?.id && data.qos_vm.id !== qosVmId) {
-        qosVmId = data.qos_vm.id;
-        syncQosButtons();
+    const auto = data.qos?.auto;
+    if (auto) {
+        qosAuto = auto;
+        const probeInterval = Number(data.qos?.vm_status?.probe_interval_seconds) || 0;
+        if (probeInterval && probeInterval !== qosProbeInterval) {
+            qosProbeInterval = probeInterval;
+        }
+        if (qosRunState) qosRunState.textContent = qosStateLabel();
     }
     updateTraffic(data.traffic || {});
     updateQos(data.qos || {});
@@ -225,18 +159,6 @@ if (telegramButton) {
     });
 }
 
-if (iperfRunButton) {
-    iperfRunButton.addEventListener("click", () =>
-        triggerQos(runIperfTest, "Memulai tes iperf3…"),
-    );
-}
-
-if (delayRunButton) {
-    delayRunButton.addEventListener("click", () =>
-        triggerQos(runDelayTest, "Memulai pengukuran delay…"),
-    );
-}
-
 const sidebarToggle = document.getElementById("sidebar-toggle");
 const sidebarScrim = document.getElementById("sidebar-scrim");
 
@@ -269,7 +191,6 @@ if (currentVm) {
         window.history.replaceState(null, "", url);
     }
 }
-syncQosButtons();
 setConnection("connecting", "Menghubungkan…");
 poller.start();
 

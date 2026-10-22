@@ -19,6 +19,7 @@ def app(tmp_path):
             "SECRET_KEY": "test-secret",
             "CSRF_ENABLED": False,
             "DATA_MODE": "demo",
+            "QOS_AUTO_ENABLED": False,
         }
     )
     yield application

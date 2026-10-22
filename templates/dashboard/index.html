@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 {% endblock %}
 {% block layout %}
-<div class="app-shell" id="overview" data-poll-interval="{{ poll_interval_ms }}" data-default-vm="{{ default_vm }}" data-qos-vm="{{ qos_vm }}">
+<div class="app-shell" id="overview" data-poll-interval="{{ poll_interval_ms }}" data-default-vm="{{ default_vm }}" data-qos-vm="{{ qos_vm }}" data-qos-vms="{{ qos_vms|join(',') }}">
     {% include "dashboard/_sidebar.html" %}
 
     <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
@@ -42,8 +42,8 @@
                                 <p class="panel__meta">Sumber: <span data-source>—</span></p>
                             </div>
                             <span class="badge badge--neutral" data-status>
-                                <span class="status-dot" aria-hidden="true"></span>
-                                <span data-status-text>Menunggu</span>
+                                <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
+                                <span data-status-text></span>
                             </span>
                         </header>
                         <p class="panel__error" data-section-error hidden></p>
@@ -69,8 +69,8 @@
                                 </div>
                                 <div class="flow-controls">
                                     <label class="flow-control">
-                                        <span>Fitur Random Forest (14)</span>
-                                        <select class="flow-select" data-feature-select aria-label="Pilih fitur Random Forest"></select>
+                                        <span data-feature-label>Fitur flow</span>
+                                        <select class="flow-select" data-feature-select aria-label="Pilih fitur flow"></select>
                                     </label>
                                     <div class="flow-stat">
                                         <span>Nilai terbaru</span>
@@ -112,8 +112,8 @@
                                 <p class="panel__meta">Sumber: <span data-source>—</span></p>
                             </div>
                             <span class="badge badge--neutral" data-status>
-                                <span class="status-dot" aria-hidden="true"></span>
-                                <span data-status-text>Menunggu</span>
+                                <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
+                                <span data-status-text></span>
                             </span>
                         </header>
                         <p class="panel__error" data-section-error hidden></p>
@@ -133,24 +133,15 @@
                                 <p class="panel__meta">Sumber: <span data-source>—</span></p>
                             </div>
                             <span class="badge badge--neutral" data-status>
-                                <span class="status-dot" aria-hidden="true"></span>
-                                <span data-status-text>Menunggu</span>
+                                <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
+                                <span data-status-text></span>
                             </span>
                         </header>
                         <p class="panel__error" data-section-error hidden></p>
                         <div class="panel__body">
                             <div class="panel__toolbar qos-toolbar">
-                                <div class="qos-toolbar__actions">
-                                    <button class="button button--primary" id="iperf-run-btn" type="button">
-                                        Jalankan tes iperf3
-                                    </button>
-                                    <button class="button button--ghost" id="delay-run-btn" type="button">
-                                        Ukur delay
-                                    </button>
-                                </div>
-                                <span class="panel__counter" data-qos-run-state>Manual</span>
+                                <span class="panel__counter" data-qos-run-state>Otomatis</span>
                             </div>
-                            <p class="inline-message" id="qos-run-message" role="status" hidden></p>
                             <div class="qos-grid">
                                 {% set qos_metrics = [
                                     ('delay', 'Delay', 'ms'),
@@ -215,8 +206,8 @@
                 <h3 data-host-name>—</h3>
             </div>
             <span class="badge badge--neutral" data-host-status>
-                <span class="status-dot" aria-hidden="true"></span>
-                <span data-host-status-text>Menunggu</span>
+                <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span data-host-status-text></span>
             </span>
         </header>
         <p class="host-card__error" data-host-error hidden></p>

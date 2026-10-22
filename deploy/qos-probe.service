@@ -1,0 +1,18 @@
+[Unit]
+Description=Probe QoS in-VM (iperf3 + ping ke VM peer via host-only)
+After=network.target
+
+[Service]
+Type=oneshot
+User=server
+Group=server
+WorkingDirectory=/home/server/ids-backend
+Environment=QOS_PROBE_TARGET=192.168.56.102  # peer host-only; diganti sesuai VM
+Environment=QOS_PROBE_TCP_PORT=5201
+Environment=QOS_PROBE_UDP_PORT=5202
+ExecStart=/usr/bin/python3 /home/server/ids-backend/qos/qos_probe.py
+# Probe ringan; batas waktu mencegah probe menggantung.
+TimeoutStartSec=90
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=10

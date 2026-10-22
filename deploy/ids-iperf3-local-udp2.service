@@ -1,0 +1,20 @@
+[Unit]
+Description=iperf3 server UDP untuk jitter & packet loss (port kedua, arah berlawanan)
+After=network.target
+
+[Service]
+Type=simple
+User=server
+Group=server
+WorkingDirectory=/home/server
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Port 5203 dipakai probe dari arah sebaliknya, supaya probe tidak pernah
+# mengukur ke server yang sedang dipakai probe dari arah lain.
+ExecStart=/usr/local/bin/iperf3 -s -p 5203 --idle-timeout 60
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,12 @@ FLOW_URL_KEYS = {
     "fail2ban-vm": "FLOW_FEATURES_FAIL2BAN_URL",
 }
 
+FLOW_TOKEN_KEYS = {
+    "lightgbm-vm": "FLOW_FEATURES_LIGHTGBM_TOKEN",
+    "randomforest-vm": "FLOW_FEATURES_RANDOM_FOREST_TOKEN",
+    "fail2ban-vm": "FLOW_FEATURES_FAIL2BAN_TOKEN",
+}
+
 VM_LABEL_KEYS = {
     "lightgbm-vm": "GLANCES_LIGHTGBM_LABEL",
     "randomforest-vm": "GLANCES_RANDOM_FOREST_LABEL",
@@ -47,22 +53,163 @@ class LiveProvider(MonitoringProvider):
         self.qos_vm = config.get("QOS_VM", DEFAULT_VM)
         if self.qos_vm not in self.vm_ids:
             self.qos_vm = DEFAULT_VM
+        self.qos_targets = self._resolve_qos_targets()
         self.lock = threading.Lock()
-        self.qos = {
-            "delay": deque(maxlen=self.max_points),
-            "jitter": deque(maxlen=self.max_points),
-            "packet_loss": deque(maxlen=self.max_points),
-            "throughput": deque(maxlen=self.max_points),
+        self.vm_qos = {
+            vm: {metric: deque(maxlen=self.max_points) for metric in QOS_KEYS}
+            for vm in self.vm_ids
         }
         self.resources = {
             host: {"cpu": deque(maxlen=self.max_points), "memory": deque(maxlen=self.max_points)}
             for host, _key, _label in HOSTS
         }
-        self.iperf_runner = Iperf3Runner(config)
-        self.delay_runner = PingRunner(config)
+        self.qos_runners = self._build_qos_runners()
+        primary = self._primary_qos_vm()
+        self.iperf_runner = self.qos_runners[primary]["iperf3"]
+        self.delay_runner = self.qos_runners[primary]["ping"]
         self.iperf_meta = None
         self.iperf_error = None
         self.delay_meta = None
+        self.iperf_state = {}
+        self.delay_state = {}
+
+    def _resolve_qos_targets(self):
+        """Return {vm_id: host} untuk setiap VM yang punya target pengukuran QoS."""
+        raw = (self.config.get("QOS_VMS") or "").strip()
+        if raw:
+            names = [part.strip() for part in raw.split(",") if part.strip()]
+        else:
+            names = [self.qos_vm]
+        targets = self.config.get("QOS_TARGETS") or {}
+        if not isinstance(targets, dict):
+            targets = {}
+        fallback = (self.config.get("IPERF3_SERVER_HOST") or "").strip()
+        result = {}
+        for name in names:
+            if name not in self.vm_ids:
+                continue
+            host = str(targets.get(name) or "").strip() or fallback
+            if host:
+                result[name] = host
+        return result
+
+    def _primary_qos_vm(self):
+        for name in self.qos_targets:
+            return name
+        return self.qos_vm
+
+    def _build_qos_runners(self):
+        runners = {}
+        for vm, host in self.qos_targets.items():
+            scoped = dict(self.config)
+            scoped["IPERF3_SERVER_HOST"] = host
+            scoped["PING_TARGET_HOST"] = host
+            runners[vm] = {
+                "iperf3": Iperf3Runner(scoped),
+                "ping": PingRunner(scoped),
+            }
+        if not runners:
+            runners[self.qos_vm] = {
+                "iperf3": Iperf3Runner(self.config),
+                "ping": PingRunner(self.config),
+            }
+        return runners
+
+    def _runners_for(self, vm):
+        return self.qos_runners.get(vm) or self.qos_runners.get(self._primary_qos_vm())
+
+    def _qos_source_mode(self):
+        mode = str(self.config.get("QOS_SOURCE_MODE") or "vm").strip().lower()
+        return mode if mode in {"vm", "laptop"} else "vm"
+
+    def _merge_vm_series(self, series_map, vm_qos, vm):
+        """Ganti seri dengan histori probe in-VM (bila tersedia).
+
+        Histori berisi banyak titik sehingga grafik bisa membentuk garis;
+        probe terakhir dipakai sebagai fallback saat histori belum ada.
+        """
+        if not isinstance(vm_qos, dict):
+            return series_map
+        history = vm_qos.get("history")
+        probe = vm_qos.get("probe")
+        merged = dict(series_map)
+
+        for key, probe_key in (
+            ("delay", "delay_ms"),
+            ("jitter", "jitter_ms"),
+            ("packet_loss", "packet_loss_percent"),
+            ("throughput", "throughput_mbps"),
+        ):
+            points = []
+            if isinstance(history, list):
+                for item in history:
+                    if not isinstance(item, dict):
+                        continue
+                    point = self._series_from_probe(item, probe_key, time_key="t")
+                    if point:
+                        points.append(point)
+            if not points and isinstance(probe, dict):
+                point = self._series_from_probe(probe, probe_key, time_key="timestamp")
+                if point:
+                    points.append(point)
+            if points:
+                merged[key] = self._limit_series(points)
+        return merged
+
+    def _limit_series(self, points):
+        """Batasi jumlah titik & buang yang di luar jendela waktu."""
+        limited = points[-self.max_points:]
+        return self._window(limited)
+
+    def _vm_status_detail(self, vm_qos):
+        """Status VM + info jumlah sampel probe untuk UI."""
+        detail = dict(vm_qos) if isinstance(vm_qos, dict) else {}
+        history = detail.get("history")
+        detail["history_points"] = len(history) if isinstance(history, list) else 0
+        detail.pop("history", None)
+        detail["probe_interval_seconds"] = int(
+            self.config.get("QOS_PROBE_INTERVAL_SECONDS", 10) or 10
+        )
+        return detail
+
+    def _qos_protocol(self, vm):
+        runner = self._runners_for(vm)["iperf3"]
+        return str(getattr(runner, "protocol_in_use", None) or runner.protocol).lower()
+
+    def _qos_api_url(self, vm):
+        """Base URL API VM untuk vm terpilih (dari URL flow features)."""
+        url = self._flow_url_for(vm) or ""
+        if not url:
+            return ""
+        return url.rsplit("/api/", 1)[0]
+
+    def _load_vm_qos(self, vm):
+        """Baca status QoS & pipeline dari dalam VM (endpoint /api/qos).
+
+        Angka ini diukur di link yang sama dengan beban pipeline ML, jadi
+        merepresentasikan dampak serangan terhadap performa server.
+        """
+        base = self._qos_api_url(vm)
+        if not base:
+            return None
+        token = self._flow_token_for(vm)
+        payload, error = self._get_json(f"{base}/api/qos", token)
+        if error or not isinstance(payload, dict):
+            return None
+        return payload
+
+    @staticmethod
+    def _series_from_probe(probe, value_key, time_key="timestamp"):
+        """Buat satu titik seri dari hasil probe in-VM."""
+        if not isinstance(probe, dict):
+            return None
+        value = probe.get(value_key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        timestamp = probe.get(time_key) or probe.get("timestamp")
+        if not timestamp:
+            return None
+        return {"t": timestamp, "value": round(float(value), 3)}
 
     def _resolve_vm(self, vm):
         selected = vm or self.default_vm
@@ -108,92 +255,113 @@ class LiveProvider(MonitoringProvider):
             return
         series.append({"t": timestamp, "value": round(float(value), 3)})
 
-    def _load_iperf(self):
-        if self.iperf_runner.configured():
-            self.iperf_meta = self.iperf_runner.meta
-            self.iperf_error = self.iperf_runner.status_error()
-            return
+    def _load_iperf(self, vm):
+        """Load iperf3 state for one VM (runner per VM, URL fallback bila ada)."""
+        runner = self._runners_for(vm)["iperf3"]
+        meta = None
+        error = None
 
-        url = self.config.get("IPERF3_RESULT_URL")
-        if not url:
-            self.iperf_error = (
-                self.iperf_runner.status_error() or "Endpoint hasil iperf3 belum dikonfigurasi."
-            )
-            return
-        if not self.config.get("IPERF3_ENABLED", False):
-            self.iperf_error = "Pengujian iperf3 dinonaktifkan (IPERF3_ENABLED=false)."
-            return
+        if runner.configured():
+            meta = runner.meta
+            error = runner.status_error()
+        else:
+            url = self.config.get("IPERF3_RESULT_URL")
+            if not url:
+                error = runner.status_error() or "Endpoint hasil iperf3 belum dikonfigurasi."
+            elif not self.config.get("IPERF3_ENABLED", False):
+                error = "Pengujian iperf3 dinonaktifkan (IPERF3_ENABLED=false)."
+            else:
+                payload, load_error = self._get_json(url)
+                if load_error:
+                    error = load_error
+                elif not isinstance(payload, dict):
+                    error = "Format hasil pengukuran iperf3 tidak dikenali."
+                else:
+                    timestamp = payload.get("timestamp") or iso()
+                    protocol = str(
+                        payload.get("protocol")
+                        or self.config.get("IPERF3_TEST_PROTOCOL", "udp")
+                    ).lower()
+                    throughput = payload.get("throughput_mbps", payload.get("throughput"))
+                    jitter = payload.get("jitter_ms", payload.get("jitter"))
+                    loss = payload.get("packet_loss_percent", payload.get("packet_loss"))
+                    with self.lock:
+                        self._append_once(self.vm_qos[vm]["throughput"], timestamp, throughput)
+                        if protocol == "udp":
+                            self._append_once(self.vm_qos[vm]["jitter"], timestamp, jitter)
+                            self._append_once(self.vm_qos[vm]["packet_loss"], timestamp, loss)
+                    meta = {
+                        "protocol": protocol.upper(),
+                        "direction": payload.get("direction", "upload"),
+                        "client": payload.get("client")
+                        or self.config.get("IPERF3_CLIENT_HOST")
+                        or None,
+                        "server": payload.get("server")
+                        or self.qos_targets.get(vm)
+                        or self.config.get("IPERF3_SERVER_HOST")
+                        or None,
+                        "duration_seconds": payload.get("duration_seconds")
+                        or self.config.get("IPERF3_TEST_DURATION_SECONDS"),
+                        "status": payload.get("status", "success"),
+                        "timestamp": timestamp,
+                    }
 
-        payload, error = self._get_json(url)
-        if error:
+        self.iperf_state[vm] = {"meta": meta, "error": error}
+        if vm == self._primary_qos_vm():
+            self.iperf_meta = meta
             self.iperf_error = error
-            return
-        if not isinstance(payload, dict):
-            self.iperf_error = "Format hasil iperf3 tidak dikenali."
-            return
 
-        timestamp = payload.get("timestamp") or iso()
-        protocol = str(payload.get("protocol") or self.config.get("IPERF3_TEST_PROTOCOL", "udp")).lower()
-        throughput = payload.get("throughput_mbps", payload.get("throughput"))
-        jitter = payload.get("jitter_ms", payload.get("jitter"))
-        loss = payload.get("packet_loss_percent", payload.get("packet_loss"))
+    def _load_delay(self, vm):
+        """Load delay state for one VM."""
+        runner = self._runners_for(vm)["ping"]
+        meta = None
+        error = None
 
-        with self.lock:
-            self._append_once(self.qos["throughput"], timestamp, throughput)
-            if protocol == "udp":
-                self._append_once(self.qos["jitter"], timestamp, jitter)
-                self._append_once(self.qos["packet_loss"], timestamp, loss)
-            self.iperf_meta = {
-                "protocol": protocol.upper(),
-                "direction": payload.get("direction", "upload"),
-                "client": payload.get("client") or self.config.get("IPERF3_CLIENT_HOST") or None,
-                "server": payload.get("server") or self.config.get("IPERF3_SERVER_HOST") or None,
-                "duration_seconds": payload.get("duration_seconds")
-                or self.config.get("IPERF3_TEST_DURATION_SECONDS"),
-                "status": payload.get("status", "success"),
-                "timestamp": timestamp,
-            }
-            self.iperf_error = None
-
-    def _load_delay(self):
-        if self.delay_runner.configured():
-            self.delay_meta = self.delay_runner.meta
-            error = self.delay_runner.status_error()
-            if error:
-                return error
-            if not self.delay_runner.series():
-                return "Belum ada hasil pengukuran delay. Jalankan pengukuran."
-            return None
-
-        self.delay_meta = None
-        url = self.config.get("DELAY_API_URL")
-        if not url:
-            return "Metode/sumber pengukuran delay belum ditentukan."
-        payload, error = self._get_json(url)
-        if error:
-            return error
-        if not isinstance(payload, dict):
-            return "Format hasil pengukuran delay tidak dikenali."
-        timestamp = payload.get("timestamp") or iso()
-        value = payload.get("delay_ms", payload.get("value_ms", payload.get("value")))
-        with self.lock:
-            self._append_once(self.qos["delay"], timestamp, value)
-        return None
-
-    def _qos_series(self):
-        if self.iperf_runner.configured():
-            throughput = self.iperf_runner.series("throughput")
-            jitter = self.iperf_runner.series("jitter")
-            packet_loss = self.iperf_runner.series("packet_loss")
+        if runner.configured():
+            meta = runner.meta
+            error = runner.status_error()
+            if not error and not runner.series():
+                error = "Belum ada hasil pengukuran delay. Jalankan pengukuran."
         else:
-            throughput = self._window(self.qos["throughput"])
-            jitter = self._window(self.qos["jitter"])
-            packet_loss = self._window(self.qos["packet_loss"])
+            url = self.config.get("DELAY_API_URL")
+            if not url:
+                error = "Metode/sumber pengukuran delay belum ditentukan."
+            else:
+                payload, load_error = self._get_json(url)
+                if load_error:
+                    error = load_error
+                elif not isinstance(payload, dict):
+                    error = "Format hasil pengukuran delay tidak dikenali."
+                else:
+                    timestamp = payload.get("timestamp") or iso()
+                    value = payload.get(
+                        "delay_ms", payload.get("value_ms", payload.get("value"))
+                    )
+                    with self.lock:
+                        self._append_once(self.vm_qos[vm]["delay"], timestamp, value)
 
-        if self.delay_runner.configured():
-            delay = self.delay_runner.series()
+        self.delay_state[vm] = {"meta": meta, "error": error}
+        if vm == self._primary_qos_vm():
+            self.delay_meta = meta
+        return error
+
+    def _qos_series(self, vm):
+        runners = self._runners_for(vm)
+        iperf_runner = runners["iperf3"]
+        delay_runner = runners["ping"]
+        if iperf_runner.configured():
+            throughput = iperf_runner.series("throughput")
+            jitter = iperf_runner.series("jitter")
+            packet_loss = iperf_runner.series("packet_loss")
         else:
-            delay = self._window(self.qos["delay"])
+            throughput = self._window(self.vm_qos[vm]["throughput"])
+            jitter = self._window(self.vm_qos[vm]["jitter"])
+            packet_loss = self._window(self.vm_qos[vm]["packet_loss"])
+
+        if delay_runner.configured():
+            delay = delay_runner.series()
+        else:
+            delay = self._window(self.vm_qos[vm]["delay"])
 
         return {
             "delay": delay,
@@ -357,55 +525,103 @@ class LiveProvider(MonitoringProvider):
             "items": items,
         }
 
+    def _attack_sources(self):
+        """Return the configured attack history endpoints with their tokens."""
+        sources = []
+        primary_url = (self.config.get("ATTACK_HISTORY_API_URL") or "").strip()
+        primary_token = self.config.get("ATTACK_HISTORY_API_TOKEN")
+        if primary_url:
+            sources.append({"url": primary_url, "token": primary_token})
+
+        extra_urls = [
+            url.strip()
+            for url in (self.config.get("ATTACK_HISTORY_EXTRA_API_URLS") or "").split(",")
+            if url.strip()
+        ]
+        extra_tokens = [
+            token.strip()
+            for token in (self.config.get("ATTACK_HISTORY_EXTRA_API_TOKENS") or "").split(",")
+            if token.strip()
+        ]
+        for index, url in enumerate(extra_urls):
+            token = extra_tokens[index] if index < len(extra_tokens) else primary_token
+            sources.append({"url": url, "token": token})
+        return sources
+
     def _load_attacks(self):
-        url = self.config.get("ATTACK_HISTORY_API_URL")
-        if not url:
+        sources = self._attack_sources()
+        if not sources:
             return {
                 "status": "unavailable",
                 "source": "API deteksi",
                 "error": "Endpoint attack history belum dikonfigurasi.",
                 "items": [],
             }
-        token = self.config.get("ATTACK_HISTORY_API_TOKEN")
-        payload, error = self._get_json(url, token)
-        if error:
-            return {"status": "error", "source": "API deteksi", "error": error, "items": []}
-        raw_items = payload.get("items") if isinstance(payload, dict) else payload
-        source = payload.get("source") if isinstance(payload, dict) else None
-        if not isinstance(raw_items, list):
-            return {
-                "status": "error",
-                "source": source or "API deteksi",
-                "error": "Format attack history tidak dikenali.",
-                "items": [],
-            }
 
         items = []
-        for raw in raw_items:
-            if not isinstance(raw, dict):
+        names = []
+        warnings = []
+        for source in sources:
+            payload, error = self._get_json(source["url"], source["token"])
+            if error:
+                warnings.append({"url": source["url"], "message": error})
                 continue
-            items.append(
-                {
-                    "detected_at": raw.get("detected_at") or raw.get("timestamp") or raw.get("time"),
-                    "source_ip": raw.get("source_ip") or raw.get("ip"),
-                    "target": raw.get("target"),
-                    "attack_type": raw.get("attack_type") or raw.get("type") or "SSH Brute Force",
-                    "detection": raw.get("detection") or raw.get("result") or raw.get("prediction"),
-                    "model": raw.get("model"),
-                    "blocking_status": raw.get("blocking_status") or raw.get("blocked"),
-                }
-            )
+            raw_items = payload.get("items") if isinstance(payload, dict) else payload
+            label = payload.get("source") if isinstance(payload, dict) else None
+            if not isinstance(raw_items, list):
+                warnings.append(
+                    {"url": source["url"], "message": "Format attack history tidak dikenali."}
+                )
+                continue
+            if label and str(label) not in names:
+                names.append(str(label))
+            for raw in raw_items:
+                if not isinstance(raw, dict):
+                    continue
+                items.append(
+                    {
+                        "detected_at": raw.get("detected_at") or raw.get("timestamp") or raw.get("time"),
+                        "source_ip": raw.get("source_ip") or raw.get("ip"),
+                        "target": raw.get("target"),
+                        "attack_type": raw.get("attack_type") or raw.get("type") or "SSH Brute Force",
+                        "detection": raw.get("detection") or raw.get("result") or raw.get("prediction"),
+                        "model": raw.get("model"),
+                        "blocking_status": raw.get("blocking_status") or raw.get("blocked"),
+                    }
+                )
+
+        if not names and warnings:
+            return {
+                "status": "error",
+                "source": "API deteksi",
+                "error": warnings[0]["message"],
+                "items": [],
+                "warnings": warnings,
+            }
+
         items.sort(key=lambda item: item.get("detected_at") or "", reverse=True)
+        label = " + ".join(names) if names else "API deteksi"
+        if warnings:
+            label = f"{label} · {len(warnings)} sumber gagal"
 
         return {
             "status": "ok" if items else "empty",
-            "source": source or "API deteksi",
+            "source": label,
             "error": None,
             "items": items[:50],
+            "warnings": warnings,
         }
 
+    def _flow_token_for(self, vm):
+        specific = (self.config.get(FLOW_TOKEN_KEYS.get(vm, "")) or "").strip()
+        return (
+            specific
+            or self.config.get("FLOW_FEATURES_API_TOKEN")
+            or self.config.get("ATTACK_HISTORY_API_TOKEN")
+        )
+
     def _load_traffic(self, vm):
-        """Build the 14-feature flow monitor from processed feature rows for one VM."""
+        """Build the flow feature monitor for one VM."""
         url = self._flow_url_for(vm)
         label = self._vm_label(vm)
         source = f"Flow features · {label}"
@@ -417,9 +633,7 @@ class LiveProvider(MonitoringProvider):
                 "features": [],
             }
 
-        token = self.config.get("FLOW_FEATURES_API_TOKEN") or self.config.get(
-            "ATTACK_HISTORY_API_TOKEN"
-        )
+        token = self._flow_token_for(vm)
         payload, error = self._get_json(url, token)
         if error:
             return {
@@ -502,20 +716,48 @@ class LiveProvider(MonitoringProvider):
             "features": features,
         }
 
+    def _auto_status(self):
+        scheduler = getattr(self, "qos_scheduler", None)
+        base = {
+            "enabled": False,
+            "interval_seconds": None,
+            "metrics": [],
+            "running": False,
+            "last_tick": None,
+            "last_error": None,
+            "active_vm": None,
+            "vms": sorted(self.qos_targets),
+        }
+        if scheduler is None:
+            return base
+        status = dict(scheduler.status())
+        status["vms"] = sorted(self.qos_targets)
+        return status
+
     def get_overview(self, vm=None):
         selected = self._resolve_vm(vm)
-        qos_active = selected == self.qos_vm
+        scheduler = getattr(self, "qos_scheduler", None)
+        if scheduler is not None and vm:
+            # VM yang sedang dibuka -> profil UDP (jitter & packet loss) jalan untuk VM ini.
+            scheduler.set_active_vm(selected)
+        qos_active = selected in self.qos_targets
 
+        vm_qos = None
         if qos_active:
-            self._load_iperf()
-            delay_error = self._load_delay()
-            series_map = self._qos_series()
+            self._load_iperf(selected)
+            delay_error = self._load_delay(selected)
+            series_map = self._qos_series(selected)
+            if self._qos_source_mode() == "vm":
+                vm_qos = self._load_vm_qos(selected)
+                series_map = self._merge_vm_series(series_map, vm_qos, selected)
         else:
             delay_error = None
             series_map = {key: [] for key in QOS_KEYS}
+        iperf_state = self.iperf_state.get(selected, {})
+        iperf_error = iperf_state.get("error")
         qos_source = (
-            "iperf3 / ICMP ping"
-            if (self.iperf_runner.configured() or self.delay_runner.configured())
+            f"iperf3 / ICMP ping \u00b7 {self._vm_label(selected)}"
+            if qos_active
             else "iperf3 / delay probe"
         )
 
@@ -533,17 +775,17 @@ class LiveProvider(MonitoringProvider):
 
             if not qos_active:
                 error = (
-                    f"QoS hanya diukur untuk {self._vm_label(self.qos_vm)}. "
-                    "Pilih VM tersebut atau tambahkan endpoint QoS khusus."
+                    f"QoS untuk {self._vm_label(selected)} belum dikonfigurasi. "
+                    "Tambahkan VM ini ke QOS_VMS dan lengkapi targetnya."
                 )
             elif key == "delay":
                 error = delay_error or "Belum ada sampel pengukuran delay."
             elif key == "throughput":
-                error = self.iperf_error or "Belum ada sampel pengukuran iperf3."
-            elif str(self.config.get("IPERF3_TEST_PROTOCOL", "udp")).lower() != "udp":
+                error = iperf_error or "Belum ada sampel pengukuran iperf3."
+            elif self._qos_protocol(selected) != "udp":
                 error = f"{key.replace('_', ' ').title()} hanya tersedia dari hasil iperf3 UDP."
             else:
-                error = self.iperf_error or "Belum ada sampel pengukuran iperf3."
+                error = iperf_error or "Belum ada sampel pengukuran iperf3."
             metrics[key] = build_metric(
                 series, unit, qos_source, status="unavailable", error=error
             )
@@ -551,22 +793,22 @@ class LiveProvider(MonitoringProvider):
         qos_status = "ok" if any(metrics[key]["series"] for key in metrics) else "unavailable"
         if not qos_active:
             qos_error = (
-                f"QoS untuk {self._vm_label(selected)} belum tersedia. "
-                f"Pengukuran aktif terikat ke {self._vm_label(self.qos_vm)}."
+                f"QoS untuk {self._vm_label(selected)} belum dikonfigurasi. "
+                "Tambahkan VM ini ke QOS_VMS agar pengukurannya dijalankan."
             )
         else:
             qos_error = None if qos_status == "ok" else (
-                self.iperf_error or delay_error or "Belum ada hasil pengukuran QoS."
+                iperf_error or delay_error or "Belum ada hasil pengukuran QoS."
             )
 
-        qos_test = self.iperf_meta if qos_active else None
+        qos_test = iperf_state.get("meta") if qos_active else None
         if not qos_test:
             qos_test = {
                 "protocol": self.config.get("IPERF3_TEST_PROTOCOL", "udp").upper(),
                 "direction": "upload",
                 "client": self.config.get("IPERF3_CLIENT_HOST") or None,
-                "server": self._vm_label(self.qos_vm) if not qos_active
-                else (self.config.get("IPERF3_SERVER_HOST") or None),
+                "server": self.qos_targets.get(selected)
+                or (self.config.get("IPERF3_SERVER_HOST") or None),
                 "duration_seconds": self.config.get("IPERF3_TEST_DURATION_SECONDS"),
                 "status": "unavailable",
                 "timestamp": None,
@@ -593,8 +835,18 @@ class LiveProvider(MonitoringProvider):
                 "source": qos_source,
                 "error": qos_error,
                 "metrics": metrics,
+                "sources": {
+                    "delay": "probe in-VM (ICMP ping)",
+                    "throughput": "probe in-VM (iperf3 TCP)",
+                    "jitter": "probe in-VM (iperf3 UDP)",
+                    "packet_loss": "probe in-VM (iperf3 UDP)",
+                },
+                "vm_status": self._vm_status_detail(vm_qos),
                 "test": qos_test,
-                "delay_test": self.delay_meta if qos_active else None,
+                "delay_test": self.delay_state.get(selected, {}).get("meta")
+                if qos_active
+                else None,
+                "auto": self._auto_status(),
             },
             "resources": resources,
             "blocked_ips": blocked,
