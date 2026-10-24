@@ -87,7 +87,7 @@ function renderFeatureChart() {
     const featureCount = Number.isFinite(featureSection?.feature_count)
         ? featureSection.feature_count
         : features.length;
-    const modelMatch = String(featureSection?.source || "").match(/^(.+?)\s+flow features$/i);
+    const modelMatch = String(featureSection?.source || "").match(/^(.+?)\s+flow features(?:\s*·.*)?$/i);
     const modelLabel = modelMatch ? modelMatch[1].trim() : "";
     setText(
         labelNode,
@@ -124,6 +124,8 @@ function renderFeatureChart() {
             data: points.map((point) => toNumber(point?.value)),
             color: "#1ed760",
             fill: true,
+            pointRadius: points.length === 1 ? 6 : points.length <= 3 ? 5 : 0,
+            pointHoverRadius: 4,
         },
     ];
 

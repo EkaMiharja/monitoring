@@ -3,7 +3,7 @@ import threading
 from collections import deque
 from datetime import timedelta
 
-from config import DEFAULT_VM, VM_IDS
+from config import CHART_RANGES, DEFAULT_VM, VM_IDS, VM_TRAFFIC
 from services.providers.base import MonitoringProvider
 from services.stats import build_metric
 from utils import iso, parse_iso, utc_now
@@ -60,7 +60,7 @@ class MockProvider(MonitoringProvider):
         self.telegram = telegram_service
         self.interval_seconds = max(config.get("POLL_INTERVAL_MS", 5000), 1000) / 1000.0
         self.window_seconds = config.get("STATS_WINDOW_SECONDS", 300)
-        self.max_points = config.get("HISTORY_MAX_POINTS", 120)
+        self.max_points = config.get("HISTORY_MAX_POINTS", 900)
         self.random = random.Random(20261020)
         self.lock = threading.Lock()
 
@@ -92,7 +92,8 @@ class MockProvider(MonitoringProvider):
     def _seed_history(self):
         now = utc_now()
         step = max(self.interval_seconds, 1)
-        points = min(self.max_points, max(12, int(self.window_seconds // step)))
+        history_seconds = max(CHART_RANGES.values())
+        points = min(self.max_points, max(12, int(history_seconds // step) + 1))
         start = now - timedelta(seconds=(points - 1) * step)
         state = {vm: dict(VM_PROFILES[vm]) for vm in self.vm_ids}
 
@@ -187,11 +188,12 @@ class MockProvider(MonitoringProvider):
                 )
             self._last_sample = now
 
-    def _window(self, series):
-        cutoff = utc_now() - timedelta(seconds=self.window_seconds)
+    def _window(self, series, window_seconds=None):
+        seconds = self.window_seconds if window_seconds is None else int(window_seconds)
+        cutoff = utc_now() - timedelta(seconds=seconds)
         result = []
         for point in series:
-            timestamp = parse_iso(point["t"])
+            timestamp = parse_iso(point.get("t"))
             if timestamp is not None and timestamp >= cutoff:
                 result.append(point)
         return result
@@ -245,18 +247,29 @@ class MockProvider(MonitoringProvider):
             for minutes, source_ip, model, blocking in rows
         ]
 
-    def get_overview(self, vm=None):
+    def get_overview(self, vm=None, window_seconds=None):
         selected = self._resolve_vm(vm)
+        window = self.window_seconds if window_seconds is None else int(window_seconds)
         self._maybe_append_sample()
 
-        traffic_series = self._window(self.vm_traffic[selected])
-        traffic = {
-            "status": "ok" if traffic_series else "empty",
-            "source": f"{TRAFFIC_SOURCE} · {selected}",
-            "unit": "Mbps",
-            "error": None if traffic_series else "Belum ada sampel traffic.",
-            "series": traffic_series,
-        }
+        if VM_TRAFFIC.get(selected, True):
+            traffic_series = self._window(self.vm_traffic[selected], window)
+            traffic = {
+                "status": "ok" if traffic_series else "empty",
+                "source": f"{TRAFFIC_SOURCE} · {selected}",
+                "unit": "Mbps",
+                "error": None if traffic_series else "Belum ada sampel traffic.",
+                "series": traffic_series,
+            }
+        else:
+            traffic = {
+                "status": "unavailable",
+                "source": f"{TRAFFIC_SOURCE} · {selected}",
+                "unit": "Mbps",
+                "error": "Network flow tidak tersedia untuk VM ini.",
+                "series": [],
+                "disabled": True,
+            }
 
         metrics = {}
         for key, unit in (
@@ -265,7 +278,7 @@ class MockProvider(MonitoringProvider):
             ("packet_loss", "%"),
             ("throughput", "Mbps"),
         ):
-            series = self._window(self.vm_qos[selected][key])
+            series = self._window(self.vm_qos[selected][key], window)
             metrics[key] = build_metric(series, unit, f"{QOS_SOURCE} · {selected}")
             if not series:
                 metrics[key].update(status="empty", error="Belum ada sampel pengukuran.")
@@ -289,8 +302,8 @@ class MockProvider(MonitoringProvider):
         host_ids = self.vm_ids if vm is None else (selected,)
         hosts = []
         for host in host_ids:
-            cpu_series = self._window(self.hosts[host]["cpu"])
-            memory_series = self._window(self.hosts[host]["memory"])
+            cpu_series = self._window(self.hosts[host]["cpu"], window)
+            memory_series = self._window(self.hosts[host]["memory"], window)
             hosts.append(
                 {
                     "id": host,
@@ -327,6 +340,8 @@ class MockProvider(MonitoringProvider):
                 "source": FAIL2BAN_SOURCE,
                 "error": None,
                 "items": self._blocked,
+                "total": len(self._blocked),
+                "truncated": False,
             },
             "attacks": {
                 "status": "ok" if self._attacks else "empty",

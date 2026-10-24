@@ -35,6 +35,7 @@
 
             <section class="section" aria-label="Telemetri VM">
                 <div class="dashboard-grid">
+                    {% if show_traffic %}
                     <section class="panel panel--span-8" id="panel-traffic" data-panel="traffic">
                         <header class="panel__head">
                             <div>
@@ -104,8 +105,9 @@
                             </div>
                         </div>
                     </section>
+                    {% endif %}
 
-                    <section class="panel panel--span-4" id="panel-resources" data-panel="resources">
+                    <section class="panel {% if show_traffic %}panel--span-4{% else %}panel--span-12{% endif %}" id="panel-resources" data-panel="resources">
                         <header class="panel__head">
                             <div>
                                 <h2>System Resource</h2>

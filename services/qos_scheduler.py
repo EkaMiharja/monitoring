@@ -42,8 +42,7 @@ class QosScheduler:
         # VM yang terakhir dibuka di dashboard -> profil UDP (jitter & packet loss)
         # hanya dijalankan untuk VM ini.
         self.active_vm = None
-        # Jarak antar VM saat tes pertama: hindari dua stream iperf3 UDP bersamaan
-        # (jalur relay Tailscale sqlalchemyDavisyah prone macet).
+        # Jarak antar VM saat tes pertama: hindari dua stream iperf3 UDP bersamaan.
         self.stagger_seconds = max(
             0, int(self.interval // max(1, 2 * len(self.runners_by_vm)))
         ) if self.runners_by_vm else 0

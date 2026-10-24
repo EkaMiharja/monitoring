@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Read-only HTTP API for Random Forest SSH brute-force detections.
 
-This module only reads ``detection_logs`` from the existing IDS SQLite
-database. It never writes to the database and never infers a blocked state
-from a prediction.
+This module only reads the existing IDS SQLite database (``detection_logs``
+and ``blocked_ips``). It never writes to the database and never infers a
+blocked state from a prediction.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_ENV_PATH = BASE_DIR / ".rf-api.env"
 DEFAULT_DB_PATH = BASE_DIR / "database" / "ids.db"
 DEFAULT_MODEL = "RandomForestClassifier"
+RF_MODEL_NAMES = ("RandomForestClassifier", "RandomForest")
 ATTACK_PREDICTION = "SSH-Bruteforce"
 ATTACK_LABEL = "SSH Brute Force"
 DEFAULT_LIMIT = 50
@@ -253,6 +254,18 @@ def is_authorized(header, expected_token):
     return hmac.compare_digest(presented.strip(), expected_token)
 
 
+def remaining_seconds(unblock_at, now):
+    if not unblock_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(unblock_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0, int((parsed.astimezone(timezone.utc) - now).total_seconds()))
+
+
 def fetch_attacks(db_path, limit=DEFAULT_LIMIT, model=DEFAULT_MODEL):
     """Return recent SSH brute-force detections from the verified RF model."""
     limit = parse_limit(limit)
@@ -284,20 +297,52 @@ def fetch_attacks(db_path, limit=DEFAULT_LIMIT, model=DEFAULT_MODEL):
                 action,
                 status
             FROM detection_logs
-            WHERE model = ? AND prediction = ?
+            WHERE model IN (?, ?) AND prediction = ?
             ORDER BY timestamp DESC, id DESC
             LIMIT ?
             """,
-            (model, ATTACK_PREDICTION, limit),
+            (*RF_MODEL_NAMES, ATTACK_PREDICTION, limit),
         ).fetchall()
+        try:
+            blocked_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(blocked_ips)"
+                ).fetchall()
+            }
+            unblock_column = (
+                "unblock_at"
+                if "unblock_at" in blocked_columns
+                else "NULL AS unblock_at"
+            )
+            blocked_rows = connection.execute(
+                f"""
+                SELECT ip_address, status, {unblock_column}
+                FROM blocked_ips
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            blocked_rows = []
     finally:
         connection.close()
+
+    blocked_ips = {
+        str(row["ip_address"]): {
+            "status": str(row["status"] or "").upper(),
+            "unblock_at": iso_utc(row["unblock_at"]),
+        }
+        for row in blocked_rows
+    }
 
     items = []
     for row in rows:
         target = row["dst_ip"]
         if target and row["dst_port"] is not None:
             target = f"{target}:{row['dst_port']}"
+        blocked = blocked_ips.get(str(row["src_ip"]))
+        blocking_status = None
+        if blocked is not None:
+            blocking_status = blocked["status"] == "BLOCKED"
         items.append(
             {
                 "id": row["id"],
@@ -312,7 +357,72 @@ def fetch_attacks(db_path, limit=DEFAULT_LIMIT, model=DEFAULT_MODEL):
                 "confidence": row["confidence"],
                 "action": row["action"],
                 "status": row["status"],
-                "blocking_status": None,
+                "blocking_status": blocking_status,
+                "unblock_at": blocked["unblock_at"] if blocked else None,
+            }
+        )
+    return items
+
+
+def fetch_blocked(db_path, limit=DEFAULT_LIMIT):
+    """Return currently blocked IPs with their scheduled auto-unblock time."""
+    limit = parse_limit(limit)
+    path = Path(db_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Database tidak ditemukan: {path}")
+
+    uri = f"file:{quote(str(path.resolve()), safe='/')}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=5)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(blocked_ips)"
+            ).fetchall()
+        }
+        unblock_column = (
+            "unblock_at" if "unblock_at" in columns else "NULL AS unblock_at"
+        )
+        rows = connection.execute(
+            f"""
+            SELECT
+                id,
+                ip_address,
+                first_blocked_at,
+                last_seen_at,
+                reason,
+                model,
+                status,
+                {unblock_column}
+            FROM blocked_ips
+            WHERE UPPER(status) = 'BLOCKED'
+            ORDER BY last_seen_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    now = datetime.now(timezone.utc)
+    items = []
+    for row in rows:
+        unblock_at = iso_utc(row["unblock_at"])
+        items.append(
+            {
+                "id": row["id"],
+                "ip": row["ip_address"],
+                "blocked_at": iso_utc(row["first_blocked_at"]),
+                "last_seen_at": iso_utc(row["last_seen_at"]),
+                "unblock_at": unblock_at,
+                "remaining_seconds": remaining_seconds(unblock_at, now),
+                "jail": "sshd",
+                "reason": row["reason"],
+                "model": row["model"],
+                "status": "blocked",
+                "source": "Random Forest",
             }
         )
     return items
@@ -507,7 +617,7 @@ class RFRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, collect_qos_status())
             return
-        if parsed.path not in {"/api/attacks", "/api/features"}:
+        if parsed.path not in {"/api/attacks", "/api/features", "/api/blocked"}:
             self._send_json(404, {"error": "not_found"})
             return
         if not self._authorized():
@@ -525,6 +635,34 @@ class RFRequestHandler(BaseHTTPRequestHandler):
             self._send_json(
                 400,
                 {"error": "invalid_limit", "message": str(exc)},
+            )
+            return
+
+        if parsed.path == "/api/blocked":
+            try:
+                items = fetch_blocked(self.server.db_path, limit)
+            except FileNotFoundError:
+                self._send_json(
+                    503,
+                    {"error": "database_unavailable", "message": "Database tidak ditemukan."},
+                )
+                return
+            except sqlite3.Error:
+                self.log_error("database error while reading blocked IPs")
+                self._send_json(
+                    500,
+                    {"error": "database_error", "message": "Gagal membaca database."},
+                )
+                return
+
+            self._send_json(
+                200,
+                {
+                    "generated_at": utc_now_iso(),
+                    "source": "Random Forest",
+                    "model": self.server.model,
+                    "items": items,
+                },
             )
             return
 

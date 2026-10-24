@@ -3,5 +3,7 @@ class MonitoringProvider:
     default_vm = "randomforest-vm"
     vm_ids = ()
 
-    def get_overview(self, vm=None):
-        raise NotImplementedError("Provider harus mengimplementasikan get_overview(vm)")
+    def get_overview(self, vm=None, window_seconds=None):
+        raise NotImplementedError(
+            "Provider harus mengimplementasikan get_overview(vm, window_seconds)"
+        )

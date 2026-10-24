@@ -24,6 +24,17 @@
             </div>
         </div>
         {% endif %}
+        {% if range_options is defined %}
+        <div class="topbar__range">
+            <div class="select-wrap">
+                <select class="select range-select" id="range-select" aria-label="Pilih rentang waktu grafik">
+                    {% for value, label in range_options %}
+                        <option value="{{ value }}" {% if value == default_range %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        {% endif %}
         <div class="connection" id="connection" data-connection="connecting">
             <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
             <span id="connection-text" aria-live="polite"></span>

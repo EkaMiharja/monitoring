@@ -1,5 +1,8 @@
-export async function fetchOverview({ vm, signal } = {}) {
-    const query = vm ? `?vm=${encodeURIComponent(vm)}` : "";
+export async function fetchOverview({ vm, range, signal } = {}) {
+    const params = new URLSearchParams();
+    if (vm) params.set("vm", vm);
+    if (range) params.set("range", range);
+    const query = params.toString() ? `?${params.toString()}` : "";
     let response;
     try {
         response = await fetch(`/api/overview${query}`, {

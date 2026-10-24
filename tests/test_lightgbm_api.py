@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -18,6 +19,20 @@ SPEC.loader.exec_module(lightgbm_api)
 
 def make_db(path):
     connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE blocked_ips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL,
+            first_blocked_at DATETIME,
+            last_seen_at DATETIME,
+            reason TEXT,
+            model TEXT,
+            status TEXT NOT NULL,
+            unblock_at DATETIME
+        )
+        """
+    )
     connection.execute(
         """
         CREATE TABLE detection_logs (
@@ -245,11 +260,99 @@ def test_fetch_attacks_returns_only_lightgbm_attacks(tmp_path):
     assert all(item["model"] == "LightGBM" for item in items)
     assert all(item["prediction"] == "SSH-Bruteforce" for item in items)
     assert all(item["blocking_status"] is None for item in items)
+    assert all(item["unblock_at"] is None for item in items)
     assert items[0]["detected_at"] == "2026-10-22T04:36:01Z"
     assert items[0]["source_ip"] == "192.168.56.1"
     assert items[0]["target"] == "192.168.56.103:22"
     assert items[0]["attack_type"] == "SSH Brute Force"
     assert items[0]["detection"] == "Malicious"
+
+
+def test_fetch_blocked_and_blocking_status(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+    unblock_at = (datetime.now(timezone.utc) + timedelta(seconds=60)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        INSERT INTO blocked_ips (
+            ip_address, first_blocked_at, last_seen_at,
+            reason, model, status, unblock_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "192.168.56.1",
+            "2026-10-22 04:36:01",
+            "2026-10-22 04:36:02",
+            "SSH brute force",
+            "LightGBM",
+            "BLOCKED",
+            unblock_at,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    items = lightgbm_api.fetch_blocked(db_path, 50)
+    assert len(items) == 1
+    assert items[0]["ip"] == "192.168.56.1"
+    assert items[0]["blocked_at"] == "2026-10-22T04:36:01Z"
+    assert items[0]["status"] == "blocked"
+    assert items[0]["source"] == "LightGBM"
+    assert items[0]["jail"] == "sshd"
+    assert 0 < items[0]["remaining_seconds"] <= 60
+
+    attacks = lightgbm_api.fetch_attacks(db_path, 50)
+    blocked_attack = next(item for item in attacks if item["source_ip"] == "192.168.56.1")
+    other_attack = next(item for item in attacks if item["source_ip"] == "192.168.56.101")
+    assert blocked_attack["blocking_status"] is True
+    assert blocked_attack["unblock_at"] == items[0]["unblock_at"]
+    assert other_attack["blocking_status"] is None
+
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "UPDATE blocked_ips SET status = 'UNBLOCKED', unblock_at = NULL WHERE ip_address = ?",
+        ("192.168.56.1",),
+    )
+    connection.commit()
+    connection.close()
+
+    attacks = lightgbm_api.fetch_attacks(db_path, 50)
+    blocked_attack = next(item for item in attacks if item["source_ip"] == "192.168.56.1")
+    assert blocked_attack["blocking_status"] is False
+    assert blocked_attack["unblock_at"] is None
+    assert lightgbm_api.fetch_blocked(db_path, 50) == []
+
+
+def test_fetch_blocked_without_unblock_column(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE blocked_ips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL,
+            first_blocked_at DATETIME,
+            last_seen_at DATETIME,
+            reason TEXT,
+            model TEXT,
+            status TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO blocked_ips (ip_address, status) VALUES (?, ?)",
+        ("192.0.2.9", "BLOCKED"),
+    )
+    connection.commit()
+    connection.close()
+
+    items = lightgbm_api.fetch_blocked(db_path)
+    assert len(items) == 1
+    assert items[0]["unblock_at"] is None
+    assert items[0]["remaining_seconds"] is None
 
 
 def test_fetch_attacks_rejects_other_model(tmp_path):
@@ -296,6 +399,39 @@ def test_http_endpoint_requires_token_and_returns_lightgbm_items(tmp_path):
         assert len(payload["items"]) == 1
         assert payload["items"][0]["model"] == "LightGBM"
         assert payload["items"][0]["blocking_status"] is None
+
+        connection = sqlite3.connect(db_path)
+        connection.execute(
+            """
+            INSERT INTO blocked_ips (
+                ip_address, first_blocked_at, last_seen_at,
+                reason, model, status, unblock_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "192.168.56.1",
+                "2026-10-22 04:36:01",
+                "2026-10-22 04:36:02",
+                "SSH brute force",
+                "LightGBM",
+                "BLOCKED",
+                "2030-01-01 00:00:00",
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+        blocked_request = urllib.request.Request(
+            f"{base_url}/api/blocked",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(blocked_request, timeout=3) as response:
+            assert response.status == 200
+            blocked_payload = json.loads(response.read().decode("utf-8"))
+        assert blocked_payload["source"] == "LightGBM"
+        assert len(blocked_payload["items"]) == 1
+        assert blocked_payload["items"][0]["ip"] == "192.168.56.1"
+        assert blocked_payload["items"][0]["remaining_seconds"] > 0
 
         with urllib.request.urlopen(f"{base_url}/health", timeout=3) as response:
             assert response.status == 200

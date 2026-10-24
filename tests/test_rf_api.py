@@ -4,6 +4,7 @@ import sqlite3
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -226,6 +227,44 @@ def test_fetch_attacks_returns_only_verified_rf_attacks(tmp_path):
     assert items[0]["detection"] == "Malicious"
 
 
+def test_fetch_attacks_accepts_runtime_model_alias(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        INSERT INTO detection_logs (
+            timestamp, src_ip, dst_ip, src_port, dst_port, protocol,
+            prediction, raw_prediction, attack_probability, confidence,
+            model, action, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "2026-10-23 09:27:06",
+            "192.168.56.101",
+            "192.168.56.103",
+            55000,
+            22,
+            "6.0",
+            "SSH-Bruteforce",
+            1,
+            1.0,
+            1.0,
+            "RandomForest",
+            "BLOCKED",
+            "BLOCKED",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    items = rf_api.fetch_attacks(db_path, 1)
+    assert len(items) == 1
+    assert items[0]["source_ip"] == "192.168.56.101"
+    assert items[0]["model"] == "RandomForest"
+    assert items[0]["blocking_status"] is None
+
+
 def test_fetch_attacks_honours_limit(tmp_path):
     db_path = tmp_path / "ids.db"
     make_db(db_path)
@@ -296,6 +335,143 @@ def test_http_endpoint_requires_token_and_returns_rf_items(tmp_path):
         with pytest.raises(urllib.error.HTTPError) as exc_info:
             urllib.request.urlopen(bad_limit, timeout=3)
         assert exc_info.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def _add_blocked_table(db_path, unblock_at):
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE blocked_ips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL UNIQUE,
+            first_blocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            reason TEXT,
+            model TEXT,
+            status TEXT DEFAULT 'BLOCKED',
+            unblock_at DATETIME
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO blocked_ips (
+            ip_address, reason, model, status, unblock_at
+        ) VALUES (?, ?, ?, 'BLOCKED', ?)
+        """,
+        (
+            "192.168.56.1",
+            "SSH-Bruteforce detected by Random Forest",
+            "RandomForestClassifier",
+            unblock_at,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO blocked_ips (
+            ip_address, reason, model, status, unblock_at
+        ) VALUES (?, ?, ?, 'UNBLOCKED', NULL)
+        """,
+        (
+            "192.168.56.101",
+            "SSH-Bruteforce detected by Random Forest",
+            "RandomForestClassifier",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_fetch_blocked_and_blocking_status(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+    unblock_at = (datetime.now(timezone.utc) + timedelta(seconds=60)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    _add_blocked_table(db_path, unblock_at)
+
+    items = rf_api.fetch_blocked(db_path, 50)
+    assert len(items) == 1
+    assert items[0]["ip"] == "192.168.56.1"
+    assert items[0]["status"] == "blocked"
+    assert items[0]["source"] == "Random Forest"
+    assert 0 < items[0]["remaining_seconds"] <= 60
+
+    attacks = rf_api.fetch_attacks(db_path, 50)
+    blocked_attack = next(item for item in attacks if item["source_ip"] == "192.168.56.1")
+    unblocked_attack = next(
+        item for item in attacks if item["source_ip"] == "192.168.56.101"
+    )
+    assert blocked_attack["blocking_status"] is True
+    assert blocked_attack["unblock_at"] == items[0]["unblock_at"]
+    assert unblocked_attack["blocking_status"] is False
+    assert unblocked_attack["unblock_at"] is None
+
+
+def test_fetch_blocked_without_unblock_column(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE blocked_ips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL,
+            first_blocked_at DATETIME,
+            last_seen_at DATETIME,
+            reason TEXT,
+            model TEXT,
+            status TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO blocked_ips (ip_address, status) VALUES (?, 'BLOCKED')",
+        ("192.0.2.9",),
+    )
+    connection.commit()
+    connection.close()
+
+    items = rf_api.fetch_blocked(db_path)
+    assert len(items) == 1
+    assert items[0]["unblock_at"] is None
+    assert items[0]["remaining_seconds"] is None
+
+
+def test_http_blocked_endpoint_requires_token_and_returns_items(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+    _add_blocked_table(
+        db_path,
+        (datetime.now(timezone.utc) + timedelta(seconds=60)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+    )
+    token = "test-token-abcdefghijklmnopqrstuvwxyz"
+
+    server = rf_api.build_server("127.0.0.1", 0, db_path, token)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(f"{base_url}/api/blocked", timeout=3)
+        assert exc_info.value.code == 401
+
+        request = urllib.request.Request(
+            f"{base_url}/api/blocked",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["source"] == "Random Forest"
+        assert len(payload["items"]) == 1
+        assert payload["items"][0]["ip"] == "192.168.56.1"
     finally:
         server.shutdown()
         server.server_close()

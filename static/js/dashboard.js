@@ -22,10 +22,12 @@ const telegramButton = document.getElementById("telegram-test-btn");
 const telegramMessage = document.getElementById("telegram-test-message");
 const qosRunState = document.querySelector("[data-qos-run-state]");
 const vmSelect = document.getElementById("vm-select");
+const rangeSelect = document.getElementById("range-select");
 
 let lastGeneratedAt = null;
 let demoMode = demoBanner ? !demoBanner.hidden : false;
 let currentVm = vmSelect?.value || shell?.dataset.defaultVm || "";
+let currentRange = rangeSelect?.value || "5m";
 let qosAuto = null;
 let qosProbeInterval = null;
 
@@ -61,10 +63,18 @@ function updateDemoBanner(mode) {
 
 function switchVm(vm) {
     if (!vm || vm === currentVm) return;
-    currentVm = vm;
 
     const url = new URL(window.location.href);
     url.searchParams.set("vm", vm);
+    window.location.assign(url.toString());
+}
+
+function switchRange(range) {
+    if (!range || range === currentRange) return;
+    currentRange = range;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("range", range);
     window.history.replaceState(null, "", url);
 
     poller.kick();
@@ -109,8 +119,13 @@ const poller = new Poller({
     intervalMs,
     onTick: async (signal) => {
         const requestVm = currentVm;
-        const data = await fetchOverview({ vm: requestVm, signal });
-        if (requestVm !== currentVm) return;
+        const requestRange = currentRange;
+        const data = await fetchOverview({
+            vm: requestVm,
+            range: requestRange,
+            signal,
+        });
+        if (requestVm !== currentVm || requestRange !== currentRange) return;
         applyOverview(data);
     },
     onError: handleError,
@@ -135,6 +150,10 @@ if (refreshButton) refreshButton.addEventListener("click", refreshNow);
 
 if (vmSelect) {
     vmSelect.addEventListener("change", () => switchVm(vmSelect.value));
+}
+
+if (rangeSelect) {
+    rangeSelect.addEventListener("change", () => switchRange(rangeSelect.value));
 }
 
 if (telegramButton) {
@@ -184,12 +203,15 @@ document.addEventListener("keydown", (event) => {
 });
 
 initAttacks();
-if (currentVm) {
+if (currentVm || currentRange) {
     const url = new URL(window.location.href);
-    if (url.searchParams.get("vm") !== currentVm) {
+    if (currentVm && url.searchParams.get("vm") !== currentVm) {
         url.searchParams.set("vm", currentVm);
-        window.history.replaceState(null, "", url);
     }
+    if (currentRange && url.searchParams.get("range") !== currentRange) {
+        url.searchParams.set("range", currentRange);
+    }
+    window.history.replaceState(null, "", url);
 }
 setConnection("connecting", "Menghubungkan…");
 poller.start();

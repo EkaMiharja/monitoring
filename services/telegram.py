@@ -6,6 +6,9 @@ import requests
 
 from utils import iso, utc_now
 
+BLOCKED_BATCH_LIMIT = 10
+BLOCKED_TEXT_LIMIT = 3500
+
 
 class TelegramService:
     def __init__(self, config):
@@ -72,69 +75,126 @@ class TelegramService:
             lines.append(f"Blocking Status: {blocking}")
         return "\n".join(lines)
 
-    def send_alert(self, payload):
-        timestamp = payload.get("timestamp") or iso()
-        source_ip = payload.get("source_ip")
-
+    def _deliver_text(self, text):
         if self.demo:
-            record = self._record(
-                timestamp=timestamp,
-                event=payload.get("event", "SSH Brute Force"),
-                source_ip=source_ip,
-                status="delivered",
-                detail="Alert simulasi diterima Telegram (DEMO).",
-            )
-            return True, record
+            return "delivered", "Alert simulasi diterima Telegram (DEMO)."
 
         if not self.configured():
-            record = self._record(
-                timestamp=timestamp,
-                event=payload.get("event", "SSH Brute Force"),
-                source_ip=source_ip,
-                status="unavailable",
-                detail="Token atau chat ID Telegram belum dikonfigurasi di backend.",
-            )
-            return False, record
+            return "unavailable", "Token atau chat ID Telegram belum dikonfigurasi di backend."
 
         url = f"{self.api_base}/bot{self.token}/sendMessage"
         try:
             response = requests.post(
                 url,
-                json={"chat_id": self.chat_id, "text": self._message_text(payload)},
+                json={"chat_id": self.chat_id, "text": text},
                 timeout=self.timeout,
             )
-            body = {}
             try:
                 body = response.json()
             except ValueError:
                 body = {}
             if response.ok and body.get("ok"):
-                record = self._record(
-                    timestamp=timestamp,
-                    event=payload.get("event", "SSH Brute Force"),
-                    source_ip=source_ip,
-                    status="delivered",
-                    detail=f"Terkirim ke Telegram (message_id={body.get('result', {}).get('message_id', '-')}).",
+                result = body.get("result")
+                if not isinstance(result, dict):
+                    result = {}
+                return (
+                    "delivered",
+                    f"Terkirim ke Telegram (message_id={result.get('message_id', '-')}).",
                 )
-                return True, record
             description = str(body.get("description") or f"HTTP {response.status_code}")[:180]
-            record = self._record(
-                timestamp=timestamp,
-                event=payload.get("event", "SSH Brute Force"),
-                source_ip=source_ip,
-                status="failed",
-                detail=f"Telegram menolak pengiriman: {description}",
-            )
-            return False, record
+            return "failed", f"Telegram menolak pengiriman: {description}"
         except requests.RequestException as exc:
-            record = self._record(
-                timestamp=timestamp,
-                event=payload.get("event", "SSH Brute Force"),
-                source_ip=source_ip,
-                status="failed",
-                detail=f"Gagal menghubungi Telegram: {exc.__class__.__name__}.",
-            )
-            return False, record
+            return "failed", f"Gagal menghubungi Telegram: {exc.__class__.__name__}."
+
+    def send_alert(self, payload):
+        timestamp = payload.get("timestamp") or iso()
+        source_ip = payload.get("source_ip")
+        event = payload.get("event", "SSH Brute Force")
+        status, detail = self._deliver_text(self._message_text(payload))
+        record = self._record(
+            timestamp=timestamp,
+            event=event,
+            source_ip=source_ip,
+            status=status,
+            detail=detail,
+        )
+        return status == "delivered", record
+
+    @staticmethod
+    def _blocked_model(item):
+        return str(item.get("source") or item.get("model") or "Tidak diketahui").strip()
+
+    def _blocked_text(self, action, items):
+        unblocked = action == "unblocked"
+        multi = len(items) > 1
+        lines = ["IP TERUNBLOCK" if unblocked else "IP TERBLOKIR"]
+        if multi:
+            lines.append(f"Total: {len(items)} IP")
+
+        for index, item in enumerate(items, 1):
+            ip = item.get("ip") or "unknown"
+            jail = str(item.get("jail") or "-").strip() or "-"
+            lines.append("")
+            if multi:
+                lines.append(f"{index}. {ip}")
+                indent = "   "
+            else:
+                lines.append(f"IP: {ip}")
+                indent = ""
+
+            lines.append(f"{indent}Model: {self._blocked_model(item)}")
+            lines.append(f"{indent}Jail: {jail}")
+            lines.append(f"{indent}Waktu blokir: {item.get('blocked_at') or '-'}")
+            if unblocked:
+                lines.append(f"{indent}Status: tidak diblokir oleh model mana pun")
+            else:
+                lines.append(f"{indent}Auto unblock: {item.get('unblock_at') or 'Manual'}")
+
+        return "\n".join(lines)
+
+    def _blocked_chunks(self, action, items):
+        chunks = []
+        current = []
+        for item in items:
+            candidate = current + [item]
+            too_many = len(candidate) > BLOCKED_BATCH_LIMIT
+            too_long = bool(current) and len(self._blocked_text(action, candidate)) > BLOCKED_TEXT_LIMIT
+            if current and (too_many or too_long):
+                chunks.append(current)
+                current = [item]
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def send_blocked_batch(self, action, items):
+        normalized = "unblocked" if str(action).strip().lower() == "unblocked" else "blocked"
+        records = []
+        if not items:
+            return True, records
+
+        all_ok = True
+        event = "IP Terunblock" if normalized == "unblocked" else "IP Terblokir"
+        for chunk in self._blocked_chunks(normalized, items):
+            status, delivery_detail = self._deliver_text(self._blocked_text(normalized, chunk))
+            all_ok = all_ok and status == "delivered"
+            for item in chunk:
+                detail = f"Model: {self._blocked_model(item)}"
+                jail = str(item.get("jail") or "").strip()
+                if jail:
+                    detail += f" · Jail: {jail}"
+                detail += f". {delivery_detail}"
+                records.append(
+                    self._record(
+                        timestamp=iso(),
+                        event=event,
+                        source_ip=item.get("ip"),
+                        status=status,
+                        detail=detail,
+                    )
+                )
+        return all_ok, records
 
     def send_test_alert(self):
         payload = {

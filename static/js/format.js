@@ -78,3 +78,13 @@ export function escapeHtml(value) {
         return entities[character];
     });
 }
+
+export function formatCountdown(totalSeconds) {
+    const seconds = Math.max(0, Math.ceil(Number(totalSeconds) || 0));
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainder = seconds % 60;
+    const mm = String(minutes).padStart(2, "0");
+    const ss = String(remainder).padStart(2, "0");
+    return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}

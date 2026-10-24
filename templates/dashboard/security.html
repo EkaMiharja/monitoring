@@ -53,8 +53,9 @@
                                     <thead>
                                         <tr>
                                             <th scope="col">IP Address</th>
+                                            <th scope="col">Sumber</th>
                                             <th scope="col">Blocked At</th>
-                                            <th scope="col">Jail</th>
+                                            <th scope="col">Auto Unblock</th>
                                             <th scope="col">Status</th>
                                         </tr>
                                     </thead>
@@ -63,7 +64,7 @@
                             </div>
                             <div class="empty-state" data-empty hidden>
                                 <p class="empty-state__title">Belum ada IP yang diblokir</p>
-                                <p class="empty-state__text">Daftar ini hanya memuat status yang dikonfirmasi Fail2Ban.</p>
+                                <p class="empty-state__text">Daftar ini memuat IP yang diblokir LightGBM dan Fail2Ban.</p>
                             </div>
                         </div>
                     </section>
@@ -82,10 +83,18 @@
                         <p class="panel__error" data-section-error hidden></p>
                         <div class="panel__body">
                             <div class="panel__toolbar">
-                                <label class="sr-only" for="attack-filter">Filter attack history</label>
-                                <input class="input input--search" id="attack-filter" type="search"
-                                       placeholder="Cari IP, jenis serangan, atau model…" autocomplete="off">
-                                <span class="panel__counter" data-attack-count>0 kejadian</span>
+                                <div class="attack-filters">
+                                    <label class="sr-only" for="attack-filter">Filter attack history</label>
+                                    <input class="input input--search" id="attack-filter" type="search"
+                                           placeholder="Cari IP, jenis serangan, atau model…" autocomplete="off">
+                                    <div class="select-wrap attack-model-wrap">
+                                        <label class="sr-only" for="attack-model-filter">Filter model</label>
+                                        <select class="select attack-model-select" id="attack-model-filter">
+                                            <option value="">Semua model</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <span class="panel__counter" data-attack-count aria-live="polite">0 kejadian</span>
                             </div>
                             <div class="table-wrap">
                                 <table class="data-table">
@@ -102,6 +111,8 @@
                                     <tbody data-attack-rows></tbody>
                                 </table>
                             </div>
+                            <nav class="pagination" data-attack-pagination
+                                 aria-label="Navigasi halaman riwayat serangan" hidden></nav>
                             <div class="empty-state" data-empty hidden>
                                 <p class="empty-state__title">Belum ada riwayat serangan</p>
                                 <p class="empty-state__text">Riwayat akan muncul ketika backend menyediakan data deteksi.</p>

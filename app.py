@@ -4,8 +4,17 @@ import db
 from api.routes import bp as api_bp
 from auth.decorators import login_required
 from auth.routes import bp as auth_bp
-from config import DEFAULT_VM, VM_IDS, Config, VM_SPECS
+from config import (
+    CHART_RANGE_LABELS,
+    CHART_RANGES,
+    DEFAULT_CHART_RANGE,
+    DEFAULT_VM,
+    VM_IDS,
+    Config,
+    VM_SPECS,
+)
 from security import get_csrf_token
+from services.blocked_notifier import BlockedIpNotifier
 from services.providers.live import LiveProvider
 from services.providers.mock import MockProvider
 from services.qos_scheduler import QosScheduler
@@ -31,6 +40,15 @@ def create_app(test_config=None):
     telegram_service = TelegramService(app.config)
     provider_class = MockProvider if app.config["DATA_MODE"] == "demo" else LiveProvider
     app.extensions["telegram_service"] = telegram_service
+    app.extensions["blocked_notifier"] = BlockedIpNotifier(
+        telegram_service,
+        enabled=(
+            app.config.get("TELEGRAM_BLOCK_NOTIFY_ENABLED")
+            and telegram_service.configured()
+            and not app.config.get("TESTING")
+        ),
+        logger=app.logger,
+    )
     provider = provider_class(app.config, telegram_service)
     app.extensions["monitoring_provider"] = provider
     for attribute, name in (("iperf_runner", "iperf3_runner"), ("delay_runner", "delay_runner")):
@@ -80,6 +98,12 @@ def create_app(test_config=None):
         ]
         requested_vm = (request.args.get("vm") or "").strip()
         active_vm = requested_vm if requested_vm in VM_IDS else DEFAULT_VM
+        active_spec = next(
+            (spec for spec in VM_SPECS if spec["id"] == active_vm),
+            VM_SPECS[0],
+        )
+        requested_range = (request.args.get("range") or "").strip().lower()
+        active_range = requested_range if requested_range in CHART_RANGES else DEFAULT_CHART_RANGE
         qos_vm = app.config.get("QOS_VM") or DEFAULT_VM
         if qos_vm not in VM_IDS:
             qos_vm = DEFAULT_VM
@@ -91,6 +115,9 @@ def create_app(test_config=None):
             poll_interval_ms=app.config["POLL_INTERVAL_MS"],
             vm_options=vm_options,
             default_vm=active_vm,
+            show_traffic=active_spec.get("traffic", True),
+            range_options=[(key, CHART_RANGE_LABELS[key]) for key in CHART_RANGES],
+            default_range=active_range,
             qos_vm=qos_vm,
             qos_vms=qos_vms,
             active_page="overview",

@@ -86,6 +86,10 @@ export function createChart(canvas, datasets, unit) {
         backgroundColor: dataset.fill ? withAlpha(dataset.color, 0.08) : dataset.color,
         fill: Boolean(dataset.fill),
         borderWidth: 2,
+        pointRadius: dataset.pointRadius ?? 0,
+        pointHoverRadius: dataset.pointHoverRadius ?? 2,
+        pointBackgroundColor: dataset.color,
+        pointBorderColor: dataset.color,
     }));
 
     return new window.Chart(canvas.getContext("2d"), {
@@ -99,7 +103,10 @@ export function updateChart(chart, labels, datasets, unit) {
     if (!chart) return;
     chart.data.labels = labels;
     chart.data.datasets.forEach((dataset, index) => {
-        dataset.data = datasets[index]?.data || [];
+        const next = datasets[index];
+        dataset.data = next?.data || [];
+        if (next?.pointRadius !== undefined) dataset.pointRadius = next.pointRadius;
+        if (next?.pointHoverRadius !== undefined) dataset.pointHoverRadius = next.pointHoverRadius;
     });
     if (chart.options.plugins?.tooltip?.callbacks) {
         chart.options.plugins.tooltip.callbacks.label = (context) => {

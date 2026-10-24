@@ -440,3 +440,33 @@ def test_live_qos_series_built_from_vm_history(monkeypatch, tmp_path):
     assert metrics["throughput"]["series"][-1]["value"] == 689.0
     assert metrics["delay"]["stats"]["count"] == 12
     assert metrics["delay"]["stats"]["max"] == 12.0
+
+
+def test_fail2ban_qos_uses_fail2ban_api_base_and_token(tmp_path):
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-fail2ban-qos.db"),
+            "SECRET_KEY": "live-fail2ban-qos-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "DELAY_API_URL": "",
+            "QOS_VMS": "lightgbm-vm,randomforest-vm,fail2ban-vm",
+            "QOS_TARGETS": {
+                "lightgbm-vm": "192.0.2.10",
+                "randomforest-vm": "192.0.2.11",
+                "fail2ban-vm": "192.0.2.12",
+            },
+            "FAIL2BAN_API_URL": "http://192.0.2.12:8080/api/blocked",
+            "FAIL2BAN_API_TOKEN": "fail2ban-token-123",
+            "FLOW_FEATURES_API_URL": "",
+            "QOS_SOURCE_MODE": "vm",
+        }
+    )
+    provider = app.extensions["monitoring_provider"]
+
+    assert provider.qos_targets["fail2ban-vm"] == "192.0.2.12"
+    assert provider._qos_api_url("fail2ban-vm") == "http://192.0.2.12:8080"
+    assert provider._qos_token_for("fail2ban-vm") == "fail2ban-token-123"

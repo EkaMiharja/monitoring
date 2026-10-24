@@ -1,7 +1,7 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from auth.decorators import login_required
-from config import VM_SPECS
+from config import CHART_RANGES, DEFAULT_CHART_RANGE, VM_SPECS
 from security import csrf_protect
 from utils import iso, utc_now
 
@@ -15,6 +15,8 @@ def _collect_errors(payload):
     errors = []
     for key in SECTIONS:
         section = payload.get(key) or {}
+        if section.get("disabled"):
+            continue
         status = section.get("status")
         if status in {"error", "unavailable"}:
             errors.append(
@@ -52,8 +54,20 @@ def overview():
             400,
         )
 
+    range_key = (request.args.get("range") or DEFAULT_CHART_RANGE).strip().lower()
+    if range_key not in CHART_RANGES:
+        return (
+            jsonify(
+                error="invalid_range",
+                message=f"Rentang grafik tidak dikenal: {range_key}",
+                available_ranges=list(CHART_RANGES),
+            ),
+            400,
+        )
+    window_seconds = CHART_RANGES[range_key]
+
     try:
-        payload = provider.get_overview(vm=vm)
+        payload = provider.get_overview(vm=vm, window_seconds=window_seconds)
     except Exception:
         current_app.logger.exception("Gagal membangun data overview")
         return (
@@ -80,8 +94,12 @@ def overview():
     payload["generated_at"] = iso(utc_now())
     payload["data_mode"] = provider.data_mode
     payload["poll_interval_ms"] = current_app.config["POLL_INTERVAL_MS"]
-    payload["stats_window_seconds"] = current_app.config["STATS_WINDOW_SECONDS"]
+    payload["range"] = range_key
+    payload["stats_window_seconds"] = window_seconds
     payload["errors"] = _collect_errors(payload)
+    notifier = current_app.extensions.get("blocked_notifier")
+    if notifier is not None:
+        notifier.observe(payload.get("blocked_ips") or {})
     return jsonify(payload)
 
 

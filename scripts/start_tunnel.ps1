@@ -1,14 +1,14 @@
 # DEPRECATED: tunnel SSH tidak dipakai lagi.
-# Kedua VM (lightgbm 192.168.1.7 dan random forest 192.168.1.6) kini diakses
-# langsung lewat jaringan lab: API di :8080, Glances di :61208, iperf3 di :5201
-# (semua bind 0.0.0.0, firewall ufw dibatasi per subnet).
+# Kedua VM (lightgbm 192.168.100.69 dan random forest 192.168.100.70) kini
+# diakses langsung lewat Wi-Fi/LAN yang sama: API di :8080, Glances di :61208,
+# iperf3 di :5201 (semua bind 0.0.0.0, ufw VM nonaktif).
 # Scheduled Task "SSH Sentinel Tunnel" sudah dinonaktifkan.
 # Script ini disimpan sebagai referensi/backup bila ada kebutuhan akses via tunnel.
 $ErrorActionPreference = "Stop"
 
 $ssh = Join-Path $env:WINDIR "System32\OpenSSH\ssh.exe"
 $key = "C:\Users\eka\.ssh\ids_audit"
-$server = "server@10.207.241.187"
+$server = "server@192.168.100.70"
 $localGlances = 61210
 $localApi = 18080
 $logOut = Join-Path $env:TEMP "ssh-sentinel-tunnel.out"

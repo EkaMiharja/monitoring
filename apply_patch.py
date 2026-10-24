@@ -56,7 +56,7 @@ replace_once(
     '    REMOTE_METRICS_TOKEN = _text("REMOTE_METRICS_TOKEN")\n'
     '    REMOTE_METRICS_DB_PATH = _text("REMOTE_METRICS_DB_PATH", str(BASE_DIR / "instance" / "remote_metrics.db"))\n'
     '    REMOTE_METRICS_HOST_ID = _text("REMOTE_METRICS_HOST_ID", "qos-vm")\n'
-    '    REMOTE_METRICS_HOST_LABEL = _text("REMOTE_METRICS_HOST_LABEL", "qos-vm (10.207.241.187)")\n',
+    '    REMOTE_METRICS_HOST_LABEL = _text("REMOTE_METRICS_HOST_LABEL", "qos-vm (192.168.100.70)")\n',
     "konfigurasi remote metrics",
 )
 

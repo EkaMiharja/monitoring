@@ -1,0 +1,12 @@
+[Unit]
+Description=Jalankan probe QoS in-VM Fail2Ban setiap 10 detik
+Requires=qos-probe-fail2ban.service
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=qos-probe-fail2ban.service
+
+[Install]
+WantedBy=timers.target

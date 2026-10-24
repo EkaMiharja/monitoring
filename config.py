@@ -21,17 +21,24 @@ VM_SPECS = (
     {
         "id": "fail2ban-vm",
         "label_key": "GLANCES_FAIL2BAN_LABEL",
-        "role": "Resource host",
+        "role": "Resource · QoS",
+        "traffic": False,
     },
 )
 VM_IDS = tuple(spec["id"] for spec in VM_SPECS)
+VM_TRAFFIC = {spec["id"]: spec.get("traffic", True) for spec in VM_SPECS}
 DEFAULT_VM = "randomforest-vm"
+
+CHART_RANGES = {"5m": 300, "30m": 1800, "1h": 3600}
+CHART_RANGE_LABELS = {"5m": "5 menit", "30m": "30 menit", "1h": "1 jam"}
+DEFAULT_CHART_RANGE = "5m"
 
 # Target pengukuran QoS per VM (host yang diukur ping & iperf3).
 # Diturunkan dari VM_HOST / RF_VM_HOST supaya hanya ada satu tempat per IP.
 QOS_TARGET_HOSTS = {
     "lightgbm-vm": os.getenv("VM_HOST", "").strip(),
     "randomforest-vm": os.getenv("RF_VM_HOST", "").strip(),
+    "fail2ban-vm": os.getenv("FAIL2BAN_VM_HOST", "").strip(),
 }
 
 
@@ -59,7 +66,7 @@ class Config:
     DATA_MODE = _text("DATA_MODE", "demo").lower()
     POLL_INTERVAL_MS = _int("POLL_INTERVAL_MS", 5000)
     STATS_WINDOW_SECONDS = _int("STATS_WINDOW_SECONDS", 300)
-    HISTORY_MAX_POINTS = _int("HISTORY_MAX_POINTS", 120)
+    HISTORY_MAX_POINTS = _int("HISTORY_MAX_POINTS", 900)
     API_TIMEOUT_SECONDS = _int("API_TIMEOUT_SECONDS", 4)
 
     SESSION_COOKIE_HTTPONLY = True
@@ -70,8 +77,15 @@ class Config:
 
     API_BASE_URL = _text("API_BASE_URL", "http://localhost:5000")
     LIGHTGBM_API_URL = _text("LIGHTGBM_API_URL")
+    LIGHTGBM_BLOCKED_API_URL = _text("LIGHTGBM_BLOCKED_API_URL")
+    LIGHTGBM_API_TOKEN = _text("LIGHTGBM_API_TOKEN")
     RANDOM_FOREST_API_URL = _text("RANDOM_FOREST_API_URL")
+    RANDOM_FOREST_BLOCKED_API_URL = _text("RANDOM_FOREST_BLOCKED_API_URL")
+    RANDOM_FOREST_API_TOKEN = _text("RANDOM_FOREST_API_TOKEN")
+    FAIL2BAN_VM_HOST = _text("FAIL2BAN_VM_HOST")
     FAIL2BAN_API_URL = _text("FAIL2BAN_API_URL")
+    FAIL2BAN_ATTACKS_API_URL = _text("FAIL2BAN_ATTACKS_API_URL")
+    FAIL2BAN_API_TOKEN = _text("FAIL2BAN_API_TOKEN")
     ATTACK_HISTORY_API_URL = _text("ATTACK_HISTORY_API_URL")
     ATTACK_HISTORY_API_TOKEN = _text("ATTACK_HISTORY_API_TOKEN")
     ATTACK_HISTORY_EXTRA_API_URLS = _text("ATTACK_HISTORY_EXTRA_API_URLS")
@@ -92,7 +106,7 @@ class Config:
     GLANCES_RANDOM_FOREST_LABEL = _text("GLANCES_RANDOM_FOREST_LABEL", "randomforest-vm")
     GLANCES_FAIL2BAN_LABEL = _text("GLANCES_FAIL2BAN_LABEL", "fail2ban-vm")
 
-    QOS_HISTORY_POINTS = _int("QOS_HISTORY_POINTS", 240)
+    QOS_HISTORY_POINTS = _int("QOS_HISTORY_POINTS", 480)
     QOS_VM = _text("QOS_VM", DEFAULT_VM)
     QOS_VMS = _text("QOS_VMS")
     QOS_TARGETS = QOS_TARGET_HOSTS
@@ -137,3 +151,6 @@ class Config:
     TELEGRAM_BOT_TOKEN = _text("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = _text("TELEGRAM_CHAT_ID")
     TELEGRAM_API_BASE = _text("TELEGRAM_API_BASE", "https://api.telegram.org")
+    TELEGRAM_BLOCK_NOTIFY_ENABLED = _bool(
+        os.getenv("TELEGRAM_BLOCK_NOTIFY_ENABLED"), False
+    )

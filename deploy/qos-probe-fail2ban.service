@@ -1,0 +1,19 @@
+[Unit]
+Description=Probe QoS in-VM Fail2Ban (iperf3 + ping ke VM peer via host-only)
+After=network.target
+
+[Service]
+Type=oneshot
+User=server
+Group=server
+WorkingDirectory=/home/server/fail2ban
+Environment=QOS_PROBE_TARGET=192.168.56.102
+Environment=QOS_PROBE_IPERF3=/usr/bin/iperf3
+Environment=QOS_PROBE_TCP_PORT=5201
+Environment=QOS_PROBE_UDP_PORT=5202
+ExecStart=/usr/bin/python3 /home/server/fail2ban/qos/qos_probe.py
+# Probe ringan; batas waktu mencegah probe menggantung.
+TimeoutStartSec=90
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=10

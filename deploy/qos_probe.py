@@ -7,8 +7,10 @@ yaitu interface host-only VirtualBox.
 
 Hasil probe ditulis ke ``qos/last.json`` (di luar folder ``capture/``) supaya
 tidak pernah disentuh pipeline ML. Probe memakai port iperf3 terpisah (5201
-untuk TCP dan 5202 untuk UDP) yang tidak lolos filter ``tcp port 22`` pada
-``ids-tcpdump``, jadi data ML tidak terkontaminasi.
+TCP untuk throughput, 5202/5203 UDP untuk jitter) yang tidak lolos filter
+``tcp port 22`` pada ``ids-tcpdump``, jadi data ML tidak terkontaminasi.
+Packet loss diambil dari ICMP ping; loss UDP hanya dipakai sebagai fallback
+bila ping tidak tersedia.
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = BASE_DIR / "qos"
 OUTPUT_PATH = OUTPUT_DIR / "last.json"
 HISTORY_PATH = OUTPUT_DIR / "history.json"
-# Berapa banyak titik yang disimpan (240 titik @ 10 detik = 40 menit).
-HISTORY_MAX_POINTS = int(os.environ.get("QOS_HISTORY_MAX_POINTS", "240"))
+# Berapa banyak titik yang disimpan (480 titik @ 10 detik = 80 menit).
+HISTORY_MAX_POINTS = int(os.environ.get("QOS_HISTORY_MAX_POINTS", "480"))
 
 IPERF3_BINARY = os.environ.get("QOS_PROBE_IPERF3", "/usr/local/bin/iperf3")
 PING_BINARY = os.environ.get("QOS_PROBE_PING", "/bin/ping")
@@ -41,7 +43,8 @@ UDP_PORT = int(os.environ.get("QOS_PROBE_UDP_PORT", "5202"))
 TCP_DURATION = int(os.environ.get("QOS_PROBE_TCP_DURATION", "3"))
 UDP_DURATION = int(os.environ.get("QOS_PROBE_UDP_DURATION", "2"))
 UDP_BANDWIDTH = os.environ.get("QOS_PROBE_UDP_BANDWIDTH", "1M")
-PING_COUNT = int(os.environ.get("QOS_PROBE_PING_COUNT", "3"))
+PING_COUNT = int(os.environ.get("QOS_PROBE_PING_COUNT", "10"))
+PING_INTERVAL = os.environ.get("QOS_PROBE_PING_INTERVAL", "0.2")
 PING_TIMEOUT = int(os.environ.get("QOS_PROBE_PING_TIMEOUT", "2"))
 # Batas waktu per subprocess supaya probe tidak pernah menggantung.
 SUBPROCESS_TIMEOUT = int(os.environ.get("QOS_PROBE_TIMEOUT", "20"))
@@ -121,7 +124,7 @@ def measure_throughput(attempts=2):
 
 
 def measure_loss(attempts=2):
-    """iperf3 UDP: jitter dan packet loss (retry sekali bila server sibuk)."""
+    """iperf3 UDP: jitter (loss UDP dipertahankan sebagai fallback)."""
     payload = None
     for _ in range(max(1, attempts)):
         payload = run_json(
@@ -166,7 +169,7 @@ def measure_delay():
                 "-c",
                 str(PING_COUNT),
                 "-i",
-                "0.3",
+                PING_INTERVAL,
                 "-W",
                 str(PING_TIMEOUT),
                 TARGET_HOST,
@@ -249,13 +252,17 @@ def main():
     throughput = measure_throughput()
     jitter, udp_loss = measure_loss()
 
-    loss = udp_loss if udp_loss is not None else ping_loss
+    loss_source = (
+        "ping" if ping_loss is not None else ("udp" if udp_loss is not None else None)
+    )
+    loss = ping_loss if ping_loss is not None else udp_loss
     payload = {
         "timestamp": utc_now_iso(),
         "target": TARGET_HOST,
         "delay_ms": delay,
         "jitter_ms": jitter,
         "packet_loss_percent": loss,
+        "packet_loss_source": loss_source,
         "throughput_mbps": throughput,
         "ping_packet_loss_percent": ping_loss,
         "udp_packet_loss_percent": udp_loss,
@@ -276,12 +283,13 @@ def main():
         write_log(f"gagal menulis hasil: {exc.__class__.__name__}")
         return 1
     write_log(
-        "delay={delay} ms throughput={throughput} Mbps jitter={jitter} ms loss={loss} % "
-        "(histori {kept} titik)".format(
+        "delay={delay} ms throughput={throughput} Mbps jitter={jitter} ms loss={loss}% "
+        "({source}; histori {kept} titik)".format(
             delay=delay,
             throughput=throughput,
             jitter=jitter,
             loss=loss,
+            source=loss_source or "tidak tersedia",
             kept=kept,
         )
     )
