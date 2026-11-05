@@ -53,6 +53,24 @@ def test_security_feed_is_separate_page(auth_client):
     assert b'id="panel-telegram"' in response.data
 
 
+def test_detection_log_page(auth_client):
+    dashboard = auth_client.get("/dashboard")
+    assert dashboard.status_code == 200
+    assert b'href="/detections"' in dashboard.data
+
+    response = auth_client.get("/detections")
+    assert response.status_code == 200
+    assert b"Detection Log" in response.data
+    assert b'id="panel-detections"' in response.data
+    assert b'id="detection-model-filter"' in response.data
+    assert b"data-detection-pagination" in response.data
+    assert b"data-detection-rows" in response.data
+
+
+def test_detection_log_requires_auth(client):
+    assert client.get("/detections").status_code == 302
+
+
 def test_login_rejects_wrong_password(client):
     client.post(
         "/register",

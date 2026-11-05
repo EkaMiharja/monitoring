@@ -46,6 +46,9 @@ FLOW_SERIES_MAX_POINTS = 300
 FLOW_SAMPLE_LIMIT = 200
 FLOW_FALLBACK_MAX_POINTS = 50
 
+DETECTION_LOG_MAX_ITEMS = 400
+DETECTION_SOURCE_MAX_ITEMS = 200
+
 
 class LiveProvider(MonitoringProvider):
     data_mode = "live"
@@ -131,11 +134,22 @@ class LiveProvider(MonitoringProvider):
         mode = str(self.config.get("QOS_SOURCE_MODE") or "vm").strip().lower()
         return mode if mode in {"vm", "laptop"} else "vm"
 
+    def _qos_iperf_protocol(self):
+        raw = (
+            self.config.get("QOS_AUTO_IPERF3_PROTOCOL")
+            or self.config.get("IPERF3_TEST_PROTOCOL")
+            or "udp"
+        )
+        protocol = str(raw).strip().upper()
+        return protocol if protocol in {"TCP", "UDP"} else "UDP"
+
     def _merge_vm_series(self, series_map, vm_qos, vm, window_seconds=None):
         """Ganti seri dengan histori probe in-VM (bila tersedia).
 
-        Histori berisi banyak titik sehingga grafik bisa membentuk garis;
-        probe terakhir dipakai sebagai fallback saat histori belum ada.
+        Histori berisi banyak titik sehingga grafik bisa membentuk garis.
+        Probe terakhir selalu ikut dipertimbangkan; bila semua titik berada
+        di luar rentang, titik terbaru tetap dipakai agar pengguna bisa
+        melihat nilai dan waktunya (sumber ditandai \"di luar rentang\").
         """
         if not isinstance(vm_qos, dict):
             return series_map
@@ -150,19 +164,24 @@ class LiveProvider(MonitoringProvider):
             ("throughput", "throughput_mbps"),
         ):
             points = []
+            seen = set()
             if isinstance(history, list):
                 for item in history:
                     if not isinstance(item, dict):
                         continue
                     point = self._series_from_probe(item, probe_key, time_key="t")
-                    if point:
+                    if point and point["t"] not in seen:
+                        seen.add(point["t"])
                         points.append(point)
-            if not points and isinstance(probe, dict):
+            if isinstance(probe, dict):
                 point = self._series_from_probe(probe, probe_key, time_key="timestamp")
-                if point:
+                if point and point["t"] not in seen:
+                    seen.add(point["t"])
                     points.append(point)
             if points:
-                merged[key] = self._limit_series(points, window_seconds)
+                points.sort(key=lambda item: item["t"])
+                limited = self._limit_series(points, window_seconds)
+                merged[key] = limited or points[-1:]
         return merged
 
     def _limit_series(self, points, window_seconds=None):
@@ -176,9 +195,18 @@ class LiveProvider(MonitoringProvider):
         history = detail.get("history")
         detail["history_points"] = len(history) if isinstance(history, list) else 0
         detail.pop("history", None)
-        detail["probe_interval_seconds"] = int(
-            self.config.get("QOS_PROBE_INTERVAL_SECONDS", 10) or 10
+        probe = detail.get("probe")
+        detail["latest_at"] = (
+            probe.get("timestamp") if isinstance(probe, dict) else None
         )
+        if self._qos_source_mode() == "laptop":
+            detail["probe_interval_seconds"] = int(
+                self.config.get("QOS_AUTO_INTERVAL_SECONDS", 5) or 5
+            )
+        else:
+            detail["probe_interval_seconds"] = int(
+                self.config.get("QOS_PROBE_INTERVAL_SECONDS", 10) or 10
+            )
         return detail
 
     def _qos_protocol(self, vm):
@@ -378,23 +406,39 @@ class LiveProvider(MonitoringProvider):
         if iperf_runner.configured():
             throughput = self._window(iperf_runner.series("throughput"), window_seconds)
             jitter = self._window(iperf_runner.series("jitter"), window_seconds)
-            packet_loss = self._window(iperf_runner.series("packet_loss"), window_seconds)
+            udp_loss = self._window(iperf_runner.series("packet_loss"), window_seconds)
         else:
             throughput = self._window(self.vm_qos[vm]["throughput"], window_seconds)
             jitter = self._window(self.vm_qos[vm]["jitter"], window_seconds)
-            packet_loss = self._window(self.vm_qos[vm]["packet_loss"], window_seconds)
+            udp_loss = self._window(self.vm_qos[vm]["packet_loss"], window_seconds)
 
         if delay_runner.configured():
             delay = self._window(delay_runner.series(), window_seconds)
+            icmp_loss = self._window(delay_runner.loss_series(), window_seconds)
         else:
             delay = self._window(self.vm_qos[vm]["delay"], window_seconds)
+            icmp_loss = []
+
+        if self._qos_source_mode() == "laptop":
+            if icmp_loss:
+                packet_loss = icmp_loss
+                loss_source = "icmp"
+            elif udp_loss:
+                packet_loss = udp_loss
+                loss_source = "udp"
+            else:
+                packet_loss = []
+                loss_source = "icmp" if delay_runner.configured() else "udp"
+        else:
+            packet_loss = udp_loss
+            loss_source = "vm"
 
         return {
             "delay": delay,
             "jitter": jitter,
             "packet_loss": packet_loss,
             "throughput": throughput,
-        }
+        }, loss_source
 
     def _glances_quicklook(self, base_url):
         base = base_url.rstrip("/")
@@ -539,6 +583,221 @@ class LiveProvider(MonitoringProvider):
                 }
             )
         return sources
+
+    def _detection_sources(self):
+        sources = []
+        seen_urls = set()
+
+        def add_source(url, token, name=None):
+            url = (url or "").strip()
+            if not url or url in seen_urls:
+                return
+            seen_urls.add(url)
+            sources.append({"url": url, "token": token, "name": name})
+
+        explicit_urls = [
+            url.strip()
+            for url in (self.config.get("DETECTION_LOG_API_URLS") or "").split(",")
+            if url.strip()
+        ]
+        explicit_tokens = [
+            token.strip()
+            for token in (self.config.get("DETECTION_LOG_API_TOKENS") or "").split(",")
+            if token.strip()
+        ]
+        if explicit_urls:
+            for index, url in enumerate(explicit_urls):
+                token = (
+                    explicit_tokens[index]
+                    if index < len(explicit_tokens)
+                    else self.config.get("ATTACK_HISTORY_API_TOKEN")
+                )
+                add_source(url, token)
+            return sources
+
+        for source in self._blocked_sources():
+            if source["name"] not in {"LightGBM", "Random Forest"}:
+                continue
+            parsed = urlsplit(source["url"])
+            base, _separator, last = parsed.path.rpartition("/")
+            path = f"{base}/detections" if last == "blocked" else f"{parsed.path.rstrip('/')}/detections"
+            add_source(
+                urlunsplit((parsed.scheme, parsed.netloc, path, "", "")),
+                source["token"],
+                source["name"],
+            )
+        return sources
+
+    @staticmethod
+    def _normalize_detection_item(raw, source_name):
+        if not isinstance(raw, dict):
+            return None
+        return {
+            "id": raw.get("id"),
+            "detected_at": raw.get("detected_at") or raw.get("timestamp") or raw.get("time"),
+            "src_ip": raw.get("src_ip") or raw.get("source_ip"),
+            "dst_ip": raw.get("dst_ip"),
+            "src_port": raw.get("src_port"),
+            "dst_port": raw.get("dst_port"),
+            "protocol": raw.get("protocol"),
+            "prediction": raw.get("prediction"),
+            "attack_probability": raw.get("attack_probability"),
+            "confidence": raw.get("confidence"),
+            "model": raw.get("model"),
+            "status": raw.get("status"),
+            "source": raw.get("source") or source_name,
+        }
+
+    def get_detection_logs(self, limit=DETECTION_LOG_MAX_ITEMS):
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = DETECTION_LOG_MAX_ITEMS
+        limit = max(1, min(limit, DETECTION_LOG_MAX_ITEMS))
+
+        sources = self._detection_sources()
+        if not sources:
+            return {
+                "status": "unavailable",
+                "source": "Log deteksi",
+                "error": "Endpoint detection log belum dikonfigurasi.",
+                "items": [],
+                "warnings": [],
+            }
+
+        groups = []
+        names = []
+        warnings = []
+        source_limit = min(limit, DETECTION_SOURCE_MAX_ITEMS)
+        for source in sources:
+            request_url = self._with_query(source["url"], limit=source_limit)
+            payload, error = self._get_json(request_url, source["token"])
+            if error:
+                warnings.append({"url": request_url, "message": error})
+                continue
+
+            raw_items = payload.get("items") if isinstance(payload, dict) else payload
+            if not isinstance(raw_items, list):
+                warnings.append(
+                    {
+                        "url": request_url,
+                        "message": "Format detection log tidak dikenali.",
+                    }
+                )
+                continue
+
+            label = payload.get("source") if isinstance(payload, dict) else None
+            label = str(label or source.get("name") or "").strip()
+            if label and label not in names:
+                names.append(label)
+
+            group = []
+            for raw in raw_items:
+                item = self._normalize_detection_item(raw, label or source.get("name"))
+                if item is not None:
+                    group.append(item)
+            groups.append(group)
+
+        if not names and warnings:
+            return {
+                "status": "error",
+                "source": "Log deteksi",
+                "error": warnings[0]["message"],
+                "items": [],
+                "warnings": warnings,
+            }
+
+        items = [item for group in groups for item in group]
+        items.sort(
+            key=lambda item: (
+                item.get("detected_at") or "",
+                str(item.get("id") or ""),
+            ),
+            reverse=True,
+        )
+        items = items[:limit]
+
+        label = " + ".join(names) if names else "Log deteksi"
+        if warnings:
+            label = f"{label} · {len(warnings)} sumber gagal"
+
+        return {
+            "status": "ok" if items else "empty",
+            "source": label,
+            "error": None,
+            "items": items,
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def _detection_count_url(url):
+        parts = urlsplit(url)
+        path = parts.path.rstrip("/")
+        if not path.endswith("/count"):
+            path = f"{path}/count"
+        return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+    def count_attacks(self, src_ip, since=None):
+        src_ip = str(src_ip or "").strip()
+        if not src_ip:
+            return {"count": None, "sources": {}, "warnings": []}
+
+        sources = self._detection_sources()
+        if not sources:
+            return {
+                "count": None,
+                "sources": {},
+                "warnings": [
+                    {
+                        "url": None,
+                        "message": "Endpoint detection log belum dikonfigurasi.",
+                    }
+                ],
+            }
+
+        total = 0
+        counts = {}
+        warnings = []
+        for source in sources:
+            params = {"src_ip": src_ip}
+            if since:
+                params["since"] = since
+            request_url = self._with_query(
+                self._detection_count_url(source["url"]),
+                **params,
+            )
+            payload, error = self._get_json(request_url, source["token"])
+            if error:
+                warnings.append({"url": request_url, "message": error})
+                continue
+            if not isinstance(payload, dict):
+                warnings.append(
+                    {
+                        "url": request_url,
+                        "message": "Format count detection log tidak dikenali.",
+                    }
+                )
+                continue
+            try:
+                count = int(payload.get("count"))
+            except (TypeError, ValueError):
+                warnings.append(
+                    {
+                        "url": request_url,
+                        "message": "Field count tidak valid.",
+                    }
+                )
+                continue
+            count = max(0, count)
+            label = str(payload.get("source") or source.get("name") or "").strip()
+            if not label:
+                label = request_url
+            counts[label] = counts.get(label, 0) + count
+            total += count
+
+        if warnings and not counts:
+            return {"count": None, "sources": {}, "warnings": warnings}
+        return {"count": total, "sources": counts, "warnings": warnings}
 
     @staticmethod
     def _seconds_until(timestamp):
@@ -1058,17 +1317,29 @@ class LiveProvider(MonitoringProvider):
             scheduler.set_active_vm(selected)
         qos_active = selected in self.qos_targets
 
+        laptop_mode = self._qos_source_mode() == "laptop"
         vm_qos = None
+        probe = None
+        stale = False
         if qos_active:
             self._load_iperf(selected)
             delay_error = self._load_delay(selected)
-            series_map = self._qos_series(selected, window)
-            if self._qos_source_mode() == "vm":
+            if laptop_mode:
+                series_map, loss_source = self._qos_series(selected, window)
+            else:
+                series_map = {key: [] for key in QOS_KEYS}
+                loss_source = "vm"
                 vm_qos = self._load_vm_qos(selected)
                 series_map = self._merge_vm_series(series_map, vm_qos, selected, window)
+                probe = vm_qos.get("probe") if isinstance(vm_qos, dict) else None
+                if isinstance(probe, dict):
+                    latest = parse_iso(probe.get("timestamp"))
+                    if latest is not None:
+                        stale = (utc_now() - latest).total_seconds() > window
         else:
             delay_error = None
             series_map = {key: [] for key in QOS_KEYS}
+            loss_source = "vm"
         iperf_state = self.iperf_state.get(selected, {})
         iperf_error = iperf_state.get("error")
         qos_source = (
@@ -1076,10 +1347,16 @@ class LiveProvider(MonitoringProvider):
             if qos_active
             else "iperf3 / delay probe"
         )
-        loss_source = (
-            "probe in-VM (ICMP ping)"
-            if self._qos_source_mode() == "vm"
-            else "iperf3 UDP"
+        if qos_active and not laptop_mode:
+            qos_source = f"probe in-VM \u00b7 {self._vm_label(selected)}"
+        if stale:
+            qos_source += " \u00b7 sampel terakhir di luar rentang"
+        loss_label = (
+            "ICMP ping dari laptop"
+            if laptop_mode and loss_source == "icmp"
+            else "iperf3 UDP dari laptop"
+            if laptop_mode
+            else "probe in-VM (ICMP ping)"
         )
 
         metrics = {}
@@ -1103,8 +1380,15 @@ class LiveProvider(MonitoringProvider):
                 error = delay_error or "Belum ada sampel pengukuran delay."
             elif key == "throughput":
                 error = iperf_error or "Belum ada sampel pengukuran iperf3."
-            elif key == "packet_loss" and self._qos_source_mode() == "vm":
-                error = "Belum ada sampel pengukuran packet loss (ICMP ping)."
+            elif key == "packet_loss":
+                if not laptop_mode:
+                    error = "Belum ada sampel pengukuran packet loss (ICMP ping)."
+                elif loss_source == "icmp":
+                    error = "Belum ada sampel pengukuran packet loss (ICMP ping laptop)."
+                elif self._qos_protocol(selected) != "udp":
+                    error = "Packet loss hanya tersedia dari ICMP ping laptop atau iperf3 UDP."
+                else:
+                    error = iperf_error or "Belum ada sampel pengukuran packet loss."
             elif self._qos_protocol(selected) != "udp":
                 error = f"{key.replace('_', ' ').title()} hanya tersedia dari hasil iperf3 UDP."
             else:
@@ -1124,7 +1408,43 @@ class LiveProvider(MonitoringProvider):
                 iperf_error or delay_error or "Belum ada hasil pengukuran QoS."
             )
 
-        qos_test = iperf_state.get("meta") if qos_active else None
+        qos_test = iperf_state.get("meta") if qos_active and laptop_mode else None
+        delay_test = (
+            self.delay_state.get(selected, {}).get("meta")
+            if qos_active and laptop_mode
+            else None
+        )
+        if qos_active and not laptop_mode and isinstance(probe, dict):
+            timestamp = probe.get("timestamp")
+            measured = (
+                probe.get("delay_ms") is not None
+                or probe.get("throughput_mbps") is not None
+            )
+            qos_test = {
+                "protocol": "TCP + UDP"
+                if probe.get("jitter_ms") is not None
+                else "TCP",
+                "direction": "in-VM",
+                "client": self._vm_label(selected),
+                "server": probe.get("target"),
+                "duration_seconds": probe.get("duration_seconds"),
+                "status": "success"
+                if probe.get("ok") and measured
+                else "unavailable",
+                "timestamp": timestamp,
+                "throughput_mbps": probe.get("throughput_mbps"),
+                "jitter_ms": probe.get("jitter_ms"),
+            }
+            delay_test = {
+                "method": "ICMP",
+                "target": probe.get("target"),
+                "count": 10,
+                "delay_ms": probe.get("delay_ms"),
+                "status": "success"
+                if probe.get("delay_ms") is not None
+                else "unavailable",
+                "timestamp": timestamp,
+            }
         if not qos_test:
             qos_test = {
                 "protocol": self.config.get("IPERF3_TEST_PROTOCOL", "udp").upper(),
@@ -1168,16 +1488,27 @@ class LiveProvider(MonitoringProvider):
                 "error": qos_error,
                 "metrics": metrics,
                 "sources": {
-                    "delay": "probe in-VM (ICMP ping)",
-                    "throughput": "probe in-VM (iperf3 TCP)",
-                    "jitter": "probe in-VM (iperf3 UDP)",
-                    "packet_loss": loss_source,
+                    "delay": "ICMP ping dari laptop"
+                    if laptop_mode
+                    else "probe in-VM (ICMP ping)",
+                    "throughput": f"iperf3 {self._qos_iperf_protocol()} dari laptop"
+                    if laptop_mode
+                    else "probe in-VM (iperf3 TCP)",
+                    "jitter": "iperf3 UDP dari laptop"
+                    if laptop_mode
+                    else "probe in-VM (iperf3 UDP)",
+                    "packet_loss": loss_label,
                 },
                 "vm_status": self._vm_status_detail(vm_qos),
                 "test": qos_test,
-                "delay_test": self.delay_state.get(selected, {}).get("meta")
-                if qos_active
-                else None,
+                "delay_test": delay_test,
+                "latest_sample": {
+                    "timestamp": probe.get("timestamp")
+                    if isinstance(probe, dict)
+                    else None,
+                    "target": probe.get("target") if isinstance(probe, dict) else None,
+                    "stale": stale,
+                },
                 "auto": self._auto_status(),
             },
             "resources": resources,

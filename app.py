@@ -40,6 +40,8 @@ def create_app(test_config=None):
     telegram_service = TelegramService(app.config)
     provider_class = MockProvider if app.config["DATA_MODE"] == "demo" else LiveProvider
     app.extensions["telegram_service"] = telegram_service
+    provider = provider_class(app.config, telegram_service)
+    app.extensions["monitoring_provider"] = provider
     app.extensions["blocked_notifier"] = BlockedIpNotifier(
         telegram_service,
         enabled=(
@@ -48,9 +50,10 @@ def create_app(test_config=None):
             and not app.config.get("TESTING")
         ),
         logger=app.logger,
+        grace_seconds=app.config.get("TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS", 60),
+        lookback_seconds=max(0.0, app.config["POLL_INTERVAL_MS"] / 1000.0),
+        counter=provider.count_attacks,
     )
-    provider = provider_class(app.config, telegram_service)
-    app.extensions["monitoring_provider"] = provider
     for attribute, name in (("iperf_runner", "iperf3_runner"), ("delay_runner", "delay_runner")):
         runner = getattr(provider, attribute, None)
         if runner is not None:
@@ -134,6 +137,18 @@ def create_app(test_config=None):
             poll_interval_ms=app.config["POLL_INTERVAL_MS"],
             active_page="security",
             page_name="Security Feed",
+            overview_url=url_for("dashboard"),
+        )
+
+    @app.get("/detections")
+    @login_required
+    def detection_log():
+        return render_template(
+            "dashboard/detections.html",
+            username=session.get("username", "User"),
+            poll_interval_ms=app.config["POLL_INTERVAL_MS"],
+            active_page="detections",
+            page_name="Detection Log",
             overview_url=url_for("dashboard"),
         )
 

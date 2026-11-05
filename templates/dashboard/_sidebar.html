@@ -8,12 +8,16 @@
 
     <nav class="sidebar__nav">
         <a class="nav-item{% if active_page == 'overview' %} is-active{% endif %}" href="{{ overview_url }}"
-           {% if active_page == 'overview' %}aria-current="page"{% endif %}>
+           data-nav-link {% if active_page == 'overview' %}aria-current="page"{% endif %}>
             <span class="nav-item__index">01</span><span>Overview</span>
         </a>
         <a class="nav-item{% if active_page == 'security' %} is-active{% endif %}" href="{{ url_for('security_feed') }}"
-           {% if active_page == 'security' %}aria-current="page"{% endif %}>
+           data-nav-link {% if active_page == 'security' %}aria-current="page"{% endif %}>
             <span class="nav-item__index">02</span><span>Security Feed</span>
+        </a>
+        <a class="nav-item{% if active_page == 'detections' %} is-active{% endif %}" href="{{ url_for('detection_log') }}"
+           data-nav-link {% if active_page == 'detections' %}aria-current="page"{% endif %}>
+            <span class="nav-item__index">03</span><span>Detection Log</span>
         </a>
     </nav>
 

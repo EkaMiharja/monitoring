@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from services.blocked_notifier import BlockedIpNotifier
 from services.providers.live import LiveProvider
 
@@ -28,7 +30,7 @@ def _actions(events):
 
 
 def test_first_snapshot_is_baseline_and_new_ip_is_reported():
-    notifier = BlockedIpNotifier(object(), enabled=True)
+    notifier = BlockedIpNotifier(object(), enabled=True, grace_seconds=0)
 
     assert notifier.observe(_section([_item("192.0.2.10")]), send=False) == []
 
@@ -42,7 +44,7 @@ def test_first_snapshot_is_baseline_and_new_ip_is_reported():
 
 
 def test_unblock_is_reported_when_ip_leaves_all_sources():
-    notifier = BlockedIpNotifier(object(), enabled=True)
+    notifier = BlockedIpNotifier(object(), enabled=True, grace_seconds=0)
     source = "LightGBM + Random Forest + Fail2Ban"
     notifier.observe(_section([_item("192.0.2.10", source=source)]), send=False)
 
@@ -53,7 +55,7 @@ def test_unblock_is_reported_when_ip_leaves_all_sources():
 
 
 def test_source_change_does_not_report_unblock():
-    notifier = BlockedIpNotifier(object(), enabled=True)
+    notifier = BlockedIpNotifier(object(), enabled=True, grace_seconds=0)
     notifier.observe(_section([_item("192.0.2.10", source="LightGBM")]), send=False)
 
     assert (
@@ -70,7 +72,7 @@ def test_source_change_does_not_report_unblock():
 
 
 def test_failed_or_unavailable_snapshot_does_not_reset_state():
-    notifier = BlockedIpNotifier(object(), enabled=True)
+    notifier = BlockedIpNotifier(object(), enabled=True, grace_seconds=0)
     notifier.observe(_section([_item("192.0.2.10")]), send=False)
 
     assert notifier.observe(_section([], status="error"), send=False) == []
@@ -82,7 +84,7 @@ def test_failed_or_unavailable_snapshot_does_not_reset_state():
 
 
 def test_partial_source_warning_holds_unblock_but_allows_new_block():
-    notifier = BlockedIpNotifier(object(), enabled=True)
+    notifier = BlockedIpNotifier(object(), enabled=True, grace_seconds=0)
     notifier.observe(
         _section([_item("192.0.2.10"), _item("192.0.2.11")]),
         send=False,
@@ -114,7 +116,7 @@ def test_partial_source_warning_holds_unblock_but_allows_new_block():
 
 
 def test_truncated_snapshot_holds_unblock_until_a_complete_payload():
-    notifier = BlockedIpNotifier(object(), enabled=True)
+    notifier = BlockedIpNotifier(object(), enabled=True, grace_seconds=0)
     notifier.observe(
         _section([_item("192.0.2.10"), _item("192.0.2.11")]),
         send=False,
@@ -143,7 +145,7 @@ def test_deliver_groups_events_by_action():
             calls.append((action, [item["ip"] for item in items]))
             return True, []
 
-    notifier = BlockedIpNotifier(FakeTelegram(), enabled=True)
+    notifier = BlockedIpNotifier(FakeTelegram(), enabled=True, grace_seconds=0)
     notifier.deliver(
         [
             {"action": "blocked", "item": _item("192.0.2.10")},
@@ -165,7 +167,7 @@ def test_worker_delivers_transitions_through_the_queue():
         def send_blocked_batch(self, action, items):
             calls.append((action, [item["ip"] for item in items]))
 
-    notifier = BlockedIpNotifier(FakeTelegram(), enabled=True)
+    notifier = BlockedIpNotifier(FakeTelegram(), enabled=True, grace_seconds=0)
     notifier.observe(_section([_item("192.0.2.10")]))
     notifier.observe(
         _section([_item("192.0.2.10"), _item("192.0.2.11")]),
@@ -184,6 +186,66 @@ def test_disabled_notifier_ignores_snapshots():
 
     assert notifier.observe(_section([_item("192.0.2.10")])) == []
     assert notifier.start() is False
+
+
+def test_reblock_within_grace_is_suppressed_and_final_has_summary(monkeypatch):
+    from services import blocked_notifier as module
+
+    times = [datetime(2026, 11, 4, 3, 0, 0, tzinfo=timezone.utc)]
+    monkeypatch.setattr(module, "utc_now", lambda: times[0])
+    calls = []
+    counted = []
+
+    class FakeTelegram:
+        def send_blocked_batch(self, action, items):
+            calls.append((action, items))
+
+    def counter(ip, since):
+        counted.append((ip, since))
+        return {
+            "count": 46,
+            "sources": {"LightGBM": 24, "Random Forest": 22},
+            "warnings": [],
+        }
+
+    notifier = BlockedIpNotifier(
+        FakeTelegram(),
+        enabled=True,
+        grace_seconds=60,
+        counter=counter,
+    )
+    notifier.observe(_section([]), send=False)
+
+    first = notifier.observe(_section([_item("192.0.2.10")]), send=False)
+    assert _actions(first) == [("blocked", "192.0.2.10")]
+    assert first[0]["item"]["first_seen"] == "2026-11-04T03:00:00Z"
+
+    times[0] += timedelta(seconds=5)
+    assert notifier.observe(_section([]), send=False) == []
+
+    times[0] += timedelta(seconds=5)
+    assert notifier.observe(_section([_item("192.0.2.10")]), send=False) == []
+
+    times[0] += timedelta(seconds=30)
+    assert notifier.observe(_section([]), send=False) == []
+
+    times[0] += timedelta(seconds=61)
+    events = notifier.observe(_section([]), send=False)
+    assert _actions(events) == [("unblocked", "192.0.2.10")]
+    item = events[0]["item"]
+    assert item["block_events"] == 2
+    assert item["first_seen"] == "2026-11-04T03:00:00Z"
+    assert item["last_seen"] == "2026-11-04T03:00:10Z"
+
+    notifier.deliver(events)
+
+    assert counted == [("192.0.2.10", "2026-11-04T03:00:00Z")]
+    assert item["attack_count"] == 46
+    assert item["attack_sources"] == {"LightGBM": 24, "Random Forest": 22}
+    assert calls == [("unblocked", [item])]
+
+    new_episode = notifier.observe(_section([_item("192.0.2.10")]), send=False)
+    assert _actions(new_episode) == [("blocked", "192.0.2.10")]
 
 
 def test_blocked_provider_reports_total_and_truncation(monkeypatch):

@@ -1,4 +1,4 @@
-import { fetchOverview, sendTelegramTest } from "./api.js";
+import { fetchOverview } from "./api.js";
 import { setHidden, setText } from "./dom.js";
 import { formatDateTime } from "./format.js";
 import { Poller } from "./polling.js";
@@ -15,8 +15,6 @@ const globalError = document.getElementById("global-error");
 const globalErrorMessage = document.getElementById("global-error-message");
 const demoBanner = document.getElementById("demo-banner");
 const refreshButton = document.getElementById("refresh-button");
-const telegramButton = document.getElementById("telegram-test-btn");
-const telegramMessage = document.getElementById("telegram-test-message");
 
 let lastGeneratedAt = null;
 
@@ -88,28 +86,6 @@ async function refreshNow() {
 }
 
 if (refreshButton) refreshButton.addEventListener("click", refreshNow);
-
-if (telegramButton) {
-    telegramButton.addEventListener("click", async () => {
-        telegramButton.disabled = true;
-        telegramMessage.hidden = true;
-        telegramMessage.className = "inline-message";
-
-        try {
-            await sendTelegramTest();
-            telegramMessage.textContent = "Test alert diproses. Riwayat Telegram diperbarui.";
-            telegramMessage.classList.add("inline-message--success");
-            telegramMessage.hidden = false;
-            await poller.refresh();
-        } catch (error) {
-            telegramMessage.textContent = error?.message || "Test alert gagal.";
-            telegramMessage.classList.add("inline-message--error");
-            telegramMessage.hidden = false;
-        } finally {
-            telegramButton.disabled = false;
-        }
-    });
-}
 
 const sidebarToggle = document.getElementById("sidebar-toggle");
 const sidebarScrim = document.getElementById("sidebar-scrim");

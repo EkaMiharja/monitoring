@@ -74,6 +74,9 @@ class Config:
     SESSION_COOKIE_SECURE = _bool(os.getenv("SESSION_COOKIE_SECURE"), False)
     PERMANENT_SESSION_LIFETIME = timedelta(hours=_int("SESSION_LIFETIME_HOURS", 8))
     CSRF_ENABLED = _bool(os.getenv("CSRF_ENABLED"), True)
+    # Token Bearer opsional untuk akses read-only (GET /api/overview, /api/qos)
+    # tanpa session/CSRF. Kosong = hanya login session yang berlaku.
+    DASHBOARD_API_TOKEN = _text("DASHBOARD_API_TOKEN")
 
     API_BASE_URL = _text("API_BASE_URL", "http://localhost:5000")
     LIGHTGBM_API_URL = _text("LIGHTGBM_API_URL")
@@ -90,6 +93,9 @@ class Config:
     ATTACK_HISTORY_API_TOKEN = _text("ATTACK_HISTORY_API_TOKEN")
     ATTACK_HISTORY_EXTRA_API_URLS = _text("ATTACK_HISTORY_EXTRA_API_URLS")
     ATTACK_HISTORY_EXTRA_API_TOKENS = _text("ATTACK_HISTORY_EXTRA_API_TOKENS")
+    DETECTION_LOG_API_URLS = _text("DETECTION_LOG_API_URLS")
+    DETECTION_LOG_API_TOKENS = _text("DETECTION_LOG_API_TOKENS")
+    DETECTION_LOG_LIMIT = _int("DETECTION_LOG_LIMIT", 400)
     FLOW_FEATURES_API_URL = _text("FLOW_FEATURES_API_URL")
     FLOW_FEATURES_API_TOKEN = _text("FLOW_FEATURES_API_TOKEN")
     FLOW_FEATURES_LIGHTGBM_TOKEN = _text("FLOW_FEATURES_LIGHTGBM_TOKEN")
@@ -153,4 +159,7 @@ class Config:
     TELEGRAM_API_BASE = _text("TELEGRAM_API_BASE", "https://api.telegram.org")
     TELEGRAM_BLOCK_NOTIFY_ENABLED = _bool(
         os.getenv("TELEGRAM_BLOCK_NOTIFY_ENABLED"), False
+    )
+    TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS = _int(
+        "TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS", 60
     )

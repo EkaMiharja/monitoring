@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 
-from utils import iso, parse_iso, utc_now
+from utils import parse_iso, utc_now, wib_iso
 
 PING_METRIC = "ping"
 IPERF3_METRIC = "iperf3"
@@ -104,7 +104,7 @@ class QosScheduler:
         with self.lock:
             if self._started_at is None:
                 self._started_at = utc_now()
-            self.last_tick = iso(utc_now())
+            self.last_tick = wib_iso()
         for index, (vm, runners) in enumerate(self.runners_by_vm.items()):
             for metric in sorted(self.metrics):
                 try:

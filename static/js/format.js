@@ -31,13 +31,17 @@ export function parseDate(value) {
     return Number.isNaN(date.getTime()) ? null : date;
 }
 
+const TIME_ZONE = "Asia/Jakarta";
+
 export function formatDateTime(value) {
     const date = parseDate(value);
     if (!date) return "—";
-    return new Intl.DateTimeFormat("id-ID", {
+    const text = new Intl.DateTimeFormat("id-ID", {
         dateStyle: "medium",
         timeStyle: "medium",
+        timeZone: TIME_ZONE,
     }).format(date);
+    return `${text} WIB`;
 }
 
 export function formatTime(value) {
@@ -47,6 +51,7 @@ export function formatTime(value) {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
+        timeZone: TIME_ZONE,
     }).format(date);
 }
 
@@ -58,6 +63,7 @@ export function formatShortTime(value) {
         month: "short",
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: TIME_ZONE,
     }).format(date);
 }
 

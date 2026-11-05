@@ -8,9 +8,9 @@ User=server
 Group=server
 WorkingDirectory=/home/server/fail2ban
 Environment=QOS_PROBE_TARGET=192.168.56.102
-Environment=QOS_PROBE_IPERF3=/usr/bin/iperf3
-Environment=QOS_PROBE_TCP_PORT=5201
-Environment=QOS_PROBE_UDP_PORT=5202
+Environment=QOS_PROBE_IPERF3=/usr/local/bin/iperf3
+Environment=QOS_PROBE_TCP_PORT=5203
+Environment=QOS_PROBE_UDP_PORT=5203
 ExecStart=/usr/bin/python3 /home/server/fail2ban/qos/qos_probe.py
 # Probe ringan; batas waktu mencegah probe menggantung.
 TimeoutStartSec=90

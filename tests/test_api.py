@@ -46,6 +46,112 @@ def test_overview_contract(auth_client):
     assert payload["telegram"]["items"]
 
 
+def test_detection_log_contract(auth_client):
+    response = auth_client.get("/api/detections?limit=60")
+    assert response.status_code == 200
+    payload = response.get_json()
+
+    assert payload["data_mode"] == "demo"
+    assert payload["poll_interval_ms"] == 5000
+    assert payload["limit"] == 60
+    assert payload["status"] == "ok"
+    assert len(payload["items"]) == 60
+    assert payload["warnings"] == []
+    assert {item["model"] for item in payload["items"]} == {
+        "LightGBM",
+        "RandomForestClassifier",
+    }
+
+    item = payload["items"][0]
+    assert set(
+        [
+            "id",
+            "detected_at",
+            "src_ip",
+            "dst_ip",
+            "src_port",
+            "dst_port",
+            "protocol",
+            "prediction",
+            "attack_probability",
+            "confidence",
+            "model",
+            "status",
+        ]
+    ).issubset(item.keys())
+
+
+def test_detection_log_limit_validation(auth_client):
+    for value in ("0", "401", "abc"):
+        response = auth_client.get(f"/api/detections?limit={value}")
+        assert response.status_code == 400
+        assert response.get_json()["error"] == "invalid_limit"
+
+
+def test_detection_log_requires_login(client):
+    assert client.get("/api/detections").status_code == 401
+
+
+def test_qos_history_endpoint(auth_client):
+    payload = auth_client.get("/api/qos?range=30m").get_json()
+
+    assert payload["range"] == "30m"
+    assert payload["stats_window_seconds"] == 1800
+    assert payload["data_mode"] == "demo"
+    assert payload["source_mode"] in {"vm", "laptop", "demo"}
+    assert payload["generated_at"].endswith("+07:00")
+    for key in ("delay", "jitter", "packet_loss", "throughput"):
+        metric = payload["metrics"][key]
+        assert "series" in metric
+        assert metric["stats"]["count"] == len(metric["series"])
+    assert "vm" in payload and "qos_vm" in payload
+
+
+def test_qos_history_endpoint_validates_args(auth_client):
+    assert auth_client.get("/api/qos?vm=unknown-vm").status_code == 400
+    assert auth_client.get("/api/qos?range=2h").status_code == 400
+
+
+def test_qos_history_requires_login(client):
+    assert client.get("/api/qos").status_code == 401
+
+
+def test_qos_history_accepts_bearer_token(tmp_path):
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "token-qos.db"),
+            "SECRET_KEY": "token-qos",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "demo",
+            "QOS_AUTO_ENABLED": False,
+            "DASHBOARD_API_TOKEN": "secret-token-123",
+        }
+    )
+    client = app.test_client()
+
+    assert client.get("/api/qos").status_code == 401
+
+    ok = client.get(
+        "/api/qos?vm=lightgbm-vm",
+        headers={"Authorization": "Bearer secret-token-123"},
+    )
+    assert ok.status_code == 200
+    assert "metrics" in ok.get_json()
+
+    bad = client.get(
+        "/api/qos",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert bad.status_code == 401
+
+    overview = client.get(
+        "/api/overview",
+        headers={"Authorization": "Bearer secret-token-123"},
+    )
+    assert overview.status_code == 200
+
+
 def test_overview_range_expands_history(auth_client):
     five = auth_client.get("/api/overview?range=5m").get_json()
     hour = auth_client.get("/api/overview?range=1h").get_json()
@@ -183,6 +289,9 @@ def test_live_mode_reports_unavailable_sources(tmp_path, client):
     assert payload["blocked_ips"]["status"] == "unavailable"
     assert payload["attacks"]["status"] == "unavailable"
     assert payload["qos"]["status"] == "unavailable"
+    detections = live_client.get("/api/detections").get_json()
+    assert detections["status"] == "unavailable"
+    assert detections["items"] == []
     assert all(host["status"] == "unavailable" for host in payload["resources"]["hosts"])
     assert payload["errors"]
 
@@ -833,6 +942,251 @@ def test_live_flow_features_use_per_vm_token(monkeypatch, tmp_path):
     assert traffic["status"] == "ok"
     assert traffic["feature_count"] == 17
     assert [feature["name"] for feature in traffic["features"]] == names
+
+
+def test_live_detections_merges_sources(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def make_item(item_id, detected_at, source_ip, model, prediction):
+        return {
+            "id": item_id,
+            "detected_at": detected_at,
+            "src_ip": source_ip,
+            "dst_ip": "192.168.56.103",
+            "src_port": 55000,
+            "dst_port": 22,
+            "protocol": "6.0",
+            "prediction": prediction,
+            "attack_probability": 0.95,
+            "confidence": 0.99,
+            "model": model,
+            "status": "DETECTED",
+        }
+
+    def fake_get(url, timeout, headers):
+        calls.append((url, headers))
+        if url.startswith("http://lg.test"):
+            return FakeResponse(
+                {
+                    "source": "LightGBM",
+                    "items": [
+                        make_item(2, "2026-10-22T04:36:01Z", "192.0.2.2", "LightGBM", "Benign"),
+                        make_item(1, "2026-10-22T04:35:01Z", "192.0.2.1", "LightGBM", "SSH-Bruteforce"),
+                    ],
+                }
+            )
+        return FakeResponse(
+            {
+                "source": "Random Forest",
+                "items": [
+                    make_item(8, "2026-10-22T04:37:01Z", "192.0.2.8", "RandomForestClassifier", "SSH-Bruteforce"),
+                ],
+            }
+        )
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-detections.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "FAIL2BAN_ATTACKS_API_URL": "",
+            "LIGHTGBM_BLOCKED_API_URL": "http://lg.test/api/blocked",
+            "LIGHTGBM_API_TOKEN": "lg-token",
+            "RANDOM_FOREST_BLOCKED_API_URL": "http://rf.test/api/blocked",
+            "RANDOM_FOREST_API_TOKEN": "rf-token",
+            "ATTACK_HISTORY_API_URL": "",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
+            "FLOW_FEATURES_API_URL": "",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
+        }
+    )
+    live_client = app.test_client()
+    with live_client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "live-tester"
+
+    payload = live_client.get("/api/detections?limit=4").get_json()
+
+    assert calls == [
+        (
+            "http://lg.test/api/detections?limit=4",
+            {"Accept": "application/json", "Authorization": "Bearer lg-token"},
+        ),
+        (
+            "http://rf.test/api/detections?limit=4",
+            {"Accept": "application/json", "Authorization": "Bearer rf-token"},
+        ),
+    ]
+    assert payload["status"] == "ok"
+    assert payload["source"] == "LightGBM + Random Forest"
+    assert payload["limit"] == 4
+    assert payload["warnings"] == []
+    assert [item["id"] for item in payload["items"]] == [8, 2, 1]
+
+
+def test_live_detections_reports_partial_source_failure(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "source": "LightGBM",
+                "items": [
+                    {
+                        "id": 1,
+                        "detected_at": "2026-10-22T04:36:01Z",
+                        "src_ip": "192.0.2.1",
+                        "dst_ip": "192.168.56.103",
+                        "src_port": 55000,
+                        "dst_port": 22,
+                        "protocol": "6.0",
+                        "prediction": "SSH-Bruteforce",
+                        "attack_probability": 0.95,
+                        "confidence": 0.99,
+                        "model": "LightGBM",
+                        "status": "DETECTED",
+                    }
+                ],
+            }
+
+    def fake_get(url, timeout, headers):
+        if url.startswith("http://rf.test"):
+            raise live_module.requests.RequestException("offline")
+        return FakeResponse()
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-detections-partial.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "FAIL2BAN_ATTACKS_API_URL": "",
+            "LIGHTGBM_BLOCKED_API_URL": "http://lg.test/api/blocked",
+            "RANDOM_FOREST_BLOCKED_API_URL": "http://rf.test/api/blocked",
+            "ATTACK_HISTORY_API_URL": "",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
+            "FLOW_FEATURES_API_URL": "",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
+        }
+    )
+    live_client = app.test_client()
+    with live_client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "live-tester"
+
+    payload = live_client.get("/api/detections").get_json()
+
+    assert payload["status"] == "ok"
+    assert payload["source"] == "LightGBM · 1 sumber gagal"
+    assert len(payload["items"]) == 1
+    assert len(payload["warnings"]) == 1
+    assert payload["warnings"][0]["url"] == "http://rf.test/api/detections?limit=200"
+
+
+def test_live_count_attacks_merges_sources(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_get(url, timeout, headers):
+        calls.append((url, headers))
+        if url.startswith("http://lg.test"):
+            return FakeResponse({"source": "LightGBM", "count": 3})
+        return FakeResponse({"source": "Random Forest", "count": 4})
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-count.db"),
+            "SECRET_KEY": "live-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": False,
+            "IPERF3_RESULT_URL": "",
+            "IPERF3_SERVER_HOST": "",
+            "FAIL2BAN_API_URL": "",
+            "FAIL2BAN_ATTACKS_API_URL": "",
+            "LIGHTGBM_BLOCKED_API_URL": "",
+            "RANDOM_FOREST_BLOCKED_API_URL": "",
+            "DETECTION_LOG_API_URLS": "http://lg.test/api/detections,http://rf.test/api/detections",
+            "DETECTION_LOG_API_TOKENS": "lg-token,rf-token",
+            "ATTACK_HISTORY_API_URL": "",
+            "ATTACK_HISTORY_EXTRA_API_URLS": "",
+            "ATTACK_HISTORY_EXTRA_API_TOKENS": "",
+            "FLOW_FEATURES_API_URL": "",
+            "GLANCES_LIGHTGBM_URL": "",
+            "GLANCES_RANDOM_FOREST_URL": "",
+            "GLANCES_FAIL2BAN_URL": "",
+            "DELAY_API_URL": "",
+            "PING_TARGET_HOST": "",
+            "QOS_AUTO_ENABLED": False,
+        }
+    )
+    provider = app.extensions["monitoring_provider"]
+
+    result = provider.count_attacks("192.0.2.9", "2026-11-04T03:00:00Z")
+
+    assert result["count"] == 7
+    assert result["sources"] == {"LightGBM": 3, "Random Forest": 4}
+    assert result["warnings"] == []
+    assert calls[0][0].startswith("http://lg.test/api/detections/count?src_ip=192.0.2.9&since=")
+    assert calls[0][1]["Authorization"] == "Bearer lg-token"
+    assert calls[1][0].startswith("http://rf.test/api/detections/count?src_ip=192.0.2.9&since=")
+    assert calls[1][1]["Authorization"] == "Bearer rf-token"
 
 
 def test_live_attacks_merges_multiple_sources(monkeypatch, tmp_path):

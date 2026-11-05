@@ -28,7 +28,6 @@
 
             <header class="page-head page-head--single">
                 <div class="page-head__copy">
-                    <p class="page-kicker">SSH brute-force monitoring</p>
                     <h1>Overview</h1>
                 </div>
             </header>
@@ -56,14 +55,6 @@
                                         <strong data-flow-time>—</strong>
                                     </div>
                                     <div>
-                                        <span>Source</span>
-                                        <strong data-flow-source>—</strong>
-                                    </div>
-                                    <div>
-                                        <span>Target</span>
-                                        <strong data-flow-target>—</strong>
-                                    </div>
-                                    <div>
                                         <span>Auth SSH</span>
                                         <strong data-flow-auth>—</strong>
                                     </div>
@@ -73,23 +64,11 @@
                                         <span data-feature-label>Fitur flow</span>
                                         <select class="flow-select" data-feature-select aria-label="Pilih fitur flow"></select>
                                     </label>
-                                    <div class="flow-stat">
-                                        <span>Nilai terbaru</span>
-                                        <strong data-feature-current>—</strong>
-                                    </div>
-                                    <div class="flow-stat">
-                                        <span>Δ terakhir</span>
-                                        <strong data-feature-delta>—</strong>
-                                    </div>
                                 </div>
                                 <div class="empty-state" data-feature-empty hidden>
                                     <p class="empty-state__title">Belum ada sampel fitur</p>
                                     <p class="empty-state__text">Fitur muncul setelah worker memproses autentikasi SSH.</p>
                                 </div>
-                                <p class="panel__note">
-                                    Pilih fitur lewat dropdown. Grafik menampilkan nilainya per sampel autentikasi SSH,
-                                    sehingga perubahan dapat dibaca dari naik/turunnya garis.
-                                </p>
                             </div>
                             <div class="chart-wrap chart-wrap--lg" data-traffic-chart>
                                 <canvas id="traffic-chart" role="img" aria-label="Grafik network flow"></canvas>
@@ -207,10 +186,6 @@
                 <p class="host-card__eyebrow">Virtual machine</p>
                 <h3 data-host-name>—</h3>
             </div>
-            <span class="badge badge--neutral" data-host-status>
-                <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
-                <span data-host-status-text></span>
-            </span>
         </header>
         <p class="host-card__error" data-host-error hidden></p>
         <div class="host-card__grid">

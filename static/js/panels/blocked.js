@@ -1,4 +1,4 @@
-import { clear, el, makeBadge, setHidden } from "../dom.js";
+import { clear, el, makeStatusLabel, setHidden } from "../dom.js";
 import { capitalize, formatCountdown, formatDateTime, formatShortTime } from "../format.js";
 import { setEmptyState, updatePanelMeta } from "../ui.js";
 
@@ -82,7 +82,7 @@ export function updateBlocked(section) {
         const statusCell = el("td");
         const blocked = String(item.status || "").toLowerCase() === "blocked";
         statusCell.appendChild(
-            makeBadge(blocked ? "success" : "neutral", blocked ? "Blocked" : capitalize(item.status)),
+            makeStatusLabel(blocked ? "success" : "neutral", blocked ? "Blocked" : capitalize(item.status)),
         );
         row.appendChild(statusCell);
         tbody.appendChild(row);
@@ -95,6 +95,6 @@ export function updateBlocked(section) {
         root,
         items.length === 0,
         section?.status === "error" ? "Gagal memuat daftar IP" : "Belum ada IP yang diblokir",
-        section?.error || "Daftar ini memuat IP yang diblokir LightGBM dan Fail2Ban.",
+        section?.error || "",
     );
 }

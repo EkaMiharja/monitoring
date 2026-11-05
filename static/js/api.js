@@ -35,26 +35,38 @@ export async function fetchOverview({ vm, range, signal } = {}) {
     return payload;
 }
 
-export async function sendTelegramTest() {
-    const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
-    const response = await fetch("/api/telegram/test", {
-        method: "POST",
-        headers: {
-            Accept: "application/json",
-            "X-CSRF-Token": token,
-        },
-        credentials: "same-origin",
-    });
+export async function fetchDetections({ limit, signal } = {}) {
+    const params = new URLSearchParams();
+    if (limit) params.set("limit", String(limit));
+    const query = params.toString() ? `?${params.toString()}` : "";
+    let response;
+    try {
+        response = await fetch(`/api/detections${query}`, {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            credentials: "same-origin",
+            cache: "no-store",
+            signal,
+        });
+    } catch (error) {
+        if (error.name === "AbortError") throw error;
+        throw new Error("Backend tidak dapat dijangkau.");
+    }
+
+    if (response.status === 401) {
+        window.location.assign(`/login?next=${encodeURIComponent("/detections")}`);
+        throw new Error("Sesi berakhir. Silakan login kembali.");
+    }
 
     let payload = null;
     try {
         payload = await response.json();
     } catch {
-        payload = null;
+        throw new Error("Respons backend bukan JSON yang valid.");
     }
 
     if (!response.ok) {
-        throw new Error(payload?.message || `Test alert gagal (HTTP ${response.status}).`);
+        throw new Error(payload?.message || `Permintaan gagal (HTTP ${response.status}).`);
     }
     return payload;
 }

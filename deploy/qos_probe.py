@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -50,8 +50,11 @@ PING_TIMEOUT = int(os.environ.get("QOS_PROBE_PING_TIMEOUT", "2"))
 SUBPROCESS_TIMEOUT = int(os.environ.get("QOS_PROBE_TIMEOUT", "20"))
 
 
-def utc_now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+WIB = timezone(timedelta(hours=7))
+
+
+def wib_now_iso():
+    return datetime.now(WIB).isoformat(timespec="seconds")
 
 
 def write_log(message):
@@ -257,7 +260,7 @@ def main():
     )
     loss = ping_loss if ping_loss is not None else udp_loss
     payload = {
-        "timestamp": utc_now_iso(),
+        "timestamp": wib_now_iso(),
         "target": TARGET_HOST,
         "delay_ms": delay,
         "jitter_ms": jitter,

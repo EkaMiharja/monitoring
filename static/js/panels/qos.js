@@ -63,7 +63,7 @@ function updateTestMetadata(root, test) {
     if (root) root.dataset.qosStatus = test?.status || "";
     if (!node) return;
     if (!test) {
-        node.textContent = "Metadata tes: —";
+        node.textContent = "Probe terakhir: —";
         return;
     }
 
@@ -75,14 +75,14 @@ function updateTestMetadata(root, test) {
         `status ${test.status || "—"}`,
         test.timestamp ? formatDateTime(test.timestamp) : "timestamp belum tersedia",
     ];
-    node.textContent = `Metadata tes: ${parts.join(" · ")}`;
+    node.textContent = `Probe terakhir: ${parts.join(" · ")}`;
 }
 
 function updateDelayMetadata(root, test) {
     const node = root?.querySelector("[data-qos-delay]");
     if (!node) return;
     if (!test) {
-        node.textContent = "Pengukuran delay: —";
+        node.textContent = "Delay: —";
         return;
     }
 
@@ -96,7 +96,7 @@ function updateDelayMetadata(root, test) {
         `status ${test.status || "—"}`,
         test.timestamp ? formatDateTime(test.timestamp) : "timestamp belum tersedia",
     ];
-    node.textContent = `Pengukuran delay: ${parts.join(" · ")}`;
+    node.textContent = `Delay: ${parts.join(" · ")}`;
 }
 
 export function updateQos(section) {

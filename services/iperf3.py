@@ -1,9 +1,10 @@
 import json
 import subprocess
 import threading
+import time
 from collections import deque
 
-from utils import iso, utc_now
+from utils import wib_iso
 
 
 class Iperf3Runner:
@@ -20,6 +21,8 @@ class Iperf3Runner:
         self.timeout_margin = max(
             5, int(config.get("IPERF3_TIMEOUT_MARGIN_SECONDS", 30) or 30)
         )
+        self.attempts = max(1, int(config.get("IPERF3_ATTEMPTS", 3) or 3))
+        self.retry_delay = max(0, float(config.get("IPERF3_RETRY_DELAY_SECONDS", 1) or 0))
         self.max_points = max(1, int(config.get("QOS_HISTORY_POINTS", 240) or 240))
 
         self.history = {
@@ -112,7 +115,7 @@ class Iperf3Runner:
                 self._next_protocol = self.protocol
             else:
                 self._next_protocol = str(protocol).strip().lower() or self.protocol
-            self.meta = self._meta("running", iso(utc_now()), error=None)
+            self.meta = self._meta("running", wib_iso(), error=None)
         threading.Thread(target=self._run_guarded, name="iperf3-runner", daemon=True).start()
         return True
 
@@ -124,40 +127,24 @@ class Iperf3Runner:
                 self._running = False
 
     def run(self):
-        timestamp = iso(utc_now())
-        duration = self._next_duration
-        try:
-            result = subprocess.run(
-                self._build_command(),
-                capture_output=True,
-                timeout=duration + self.timeout_margin,
-            )
-        except FileNotFoundError:
-            self._fail("Binari iperf3 tidak ditemukan. Set IPERF3_BINARY ke path lengkap.", timestamp)
-            return
-        except subprocess.TimeoutExpired:
-            self._fail(
-                f"iperf3 melebihi batas waktu {duration + self.timeout_margin} detik.",
-                timestamp,
-            )
-            return
-        except OSError as exc:
-            self._fail(f"iperf3 gagal dijalankan ({exc.__class__.__name__}).", timestamp)
-            return
+        """Jalankan sekali tes, ulangi bila control/JSON gagal.
 
-        stdout = self._decode(result.stdout)
-        stderr = self._decode(result.stderr)
-        if result.returncode != 0:
-            self._fail(self._error_detail(stdout, stderr), timestamp)
-            return
+        Link LAN/VM kadang menutup koneksi kontrol iperf3 lebih awal. Retry
+        kecil membuat satu titik sampel tidak langsung hilang.
+        """
+        timestamp = wib_iso()
+        parsed = None
+        error = None
+        for attempt in range(self.attempts):
+            parsed, error = self._attempt()
+            if error is None:
+                break
+            if attempt + 1 < self.attempts and self.retry_delay:
+                time.sleep(self.retry_delay)
 
-        try:
-            payload = json.loads(stdout)
-        except ValueError:
-            self._fail("Keluaran iperf3 bukan JSON yang valid.", timestamp)
+        if error is not None or parsed is None:
+            self._fail(error or "iperf3 tidak menghasilkan data.", timestamp)
             return
-
-        parsed = self.parse(payload)
         if parsed["throughput"] is None:
             self._fail("Throughput tidak ditemukan pada keluaran iperf3.", timestamp)
             return
@@ -170,9 +157,36 @@ class Iperf3Runner:
             self.meta = self._meta("success", timestamp, error=None)
             self.error = None
 
+    def _attempt(self):
+        """Satu percobaan iperf3; return (parsed, error_message)."""
+        duration = self._next_duration
+        try:
+            result = subprocess.run(
+                self._build_command(),
+                capture_output=True,
+                timeout=duration + self.timeout_margin,
+            )
+        except FileNotFoundError:
+            return None, "Binari iperf3 tidak ditemukan. Set IPERF3_BINARY ke path lengkap."
+        except subprocess.TimeoutExpired:
+            return None, f"iperf3 melebihi batas waktu {duration + self.timeout_margin} detik."
+        except OSError as exc:
+            return None, f"iperf3 gagal dijalankan ({exc.__class__.__name__})."
+
+        stdout = self._decode(result.stdout)
+        stderr = self._decode(result.stderr)
+        if result.returncode != 0:
+            return None, self._error_detail(stdout, stderr)
+
+        try:
+            payload = json.loads(stdout)
+        except ValueError:
+            return None, "Keluaran iperf3 bukan JSON yang valid."
+        return self.parse(payload), None
+
     def run_loss(self):
         """Tes UDP singkat; hanya jitter & packet loss yang diambil."""
-        timestamp = iso(utc_now())
+        timestamp = wib_iso()
         try:
             result = subprocess.run(
                 self._build_loss_command(),

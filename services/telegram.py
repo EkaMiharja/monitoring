@@ -124,10 +124,38 @@ class TelegramService:
     def _blocked_model(item):
         return str(item.get("source") or item.get("model") or "Tidak diketahui").strip()
 
+    @staticmethod
+    def _duration_text(seconds):
+        try:
+            total = max(0, int(seconds))
+        except (TypeError, ValueError):
+            return "-"
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours} jam {minutes} menit"
+        if minutes:
+            return f"{minutes} menit {secs} detik"
+        return f"{secs} detik"
+
+    @staticmethod
+    def _count_text(item):
+        count = item.get("attack_count")
+        if count is None:
+            return "tidak tersedia"
+        try:
+            return f"{int(count)} kali"
+        except (TypeError, ValueError):
+            return "tidak tersedia"
+
     def _blocked_text(self, action, items):
         unblocked = action == "unblocked"
         multi = len(items) > 1
-        lines = ["IP TERUNBLOCK" if unblocked else "IP TERBLOKIR"]
+        lines = [
+            "✅ SERANGAN TERAKHIR / IP TERUNBLOCK"
+            if unblocked
+            else "🚨 SERANGAN PERTAMA TERDETEKSI"
+        ]
         if multi:
             lines.append(f"Total: {len(items)} IP")
 
@@ -144,10 +172,30 @@ class TelegramService:
 
             lines.append(f"{indent}Model: {self._blocked_model(item)}")
             lines.append(f"{indent}Jail: {jail}")
-            lines.append(f"{indent}Waktu blokir: {item.get('blocked_at') or '-'}")
             if unblocked:
+                lines.append(
+                    f"{indent}Serangan pertama: "
+                    f"{item.get('first_seen') or item.get('blocked_at') or '-'}"
+                )
+                lines.append(
+                    f"{indent}Serangan terakhir: {item.get('last_seen') or '-'}"
+                )
+                lines.append(
+                    f"{indent}Durasi: {self._duration_text(item.get('duration_seconds'))}"
+                )
+                lines.append(f"{indent}Total serangan: {self._count_text(item)}")
+                sources = item.get("attack_sources")
+                if isinstance(sources, dict) and sources:
+                    detail = " · ".join(
+                        f"{name} {count}" for name, count in sources.items()
+                    )
+                    lines.append(f"{indent}Rincian: {detail}")
                 lines.append(f"{indent}Status: tidak diblokir oleh model mana pun")
             else:
+                lines.append(
+                    f"{indent}Waktu serangan: "
+                    f"{item.get('first_seen') or item.get('blocked_at') or '-'}"
+                )
                 lines.append(f"{indent}Auto unblock: {item.get('unblock_at') or 'Manual'}")
 
         return "\n".join(lines)
@@ -175,7 +223,7 @@ class TelegramService:
             return True, records
 
         all_ok = True
-        event = "IP Terunblock" if normalized == "unblocked" else "IP Terblokir"
+        event = "Serangan Terakhir" if normalized == "unblocked" else "Serangan Pertama"
         for chunk in self._blocked_chunks(normalized, items):
             status, delivery_detail = self._deliver_text(self._blocked_text(normalized, chunk))
             all_ok = all_ok and status == "delivered"
@@ -184,6 +232,8 @@ class TelegramService:
                 jail = str(item.get("jail") or "").strip()
                 if jail:
                     detail += f" · Jail: {jail}"
+                if normalized == "unblocked":
+                    detail += f" · Total serangan: {self._count_text(item)}"
                 detail += f". {delivery_detail}"
                 records.append(
                     self._record(

@@ -250,6 +250,127 @@ def test_features_http_endpoint_requires_token(tmp_path):
         thread.join(timeout=3)
 
 
+def test_fetch_detections_returns_all_predictions_and_ports(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+
+    items = lightgbm_api.fetch_detections(db_path, 3)
+
+    assert len(items) == 3
+    assert [item["prediction"] for item in items] == [
+        "SSH-Bruteforce",
+        "SSH-Bruteforce",
+        "Benign",
+    ]
+    assert items[0]["id"] == 1
+    assert items[0]["detected_at"] == "2026-10-22T04:36:01Z"
+    assert items[0]["src_ip"] == "192.168.56.1"
+    assert items[0]["dst_ip"] == "192.168.56.103"
+    assert items[0]["src_port"] == 55000
+    assert items[0]["dst_port"] == 22
+    assert items[0]["protocol"] == "6.0"
+    assert items[0]["attack_probability"] == 0.9875
+    assert items[0]["confidence"] == 0.9875
+    assert items[0]["model"] == "LightGBM"
+    assert items[0]["status"] == "DETECTED"
+    assert items[0]["source"] == "LightGBM"
+
+
+def test_count_attacks_filters_ip_prediction_and_since(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+
+    assert lightgbm_api.count_attacks(db_path, "192.168.56.1") == 2
+    assert lightgbm_api.count_attacks(db_path, "192.168.56.50") == 0
+    assert (
+        lightgbm_api.count_attacks(
+            db_path,
+            "192.168.56.1",
+            "2026-10-22T04:35:00Z",
+        )
+        == 1
+    )
+
+    with pytest.raises(ValueError):
+        lightgbm_api.count_attacks(db_path, "")
+    with pytest.raises(ValueError):
+        lightgbm_api.count_attacks(db_path, "192.168.56.1", "not-a-date")
+
+
+def test_count_attacks_http_endpoint(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+    token = "test-token-abcdefghijklmnopqrstuvwxyz"
+
+    server = lightgbm_api.build_server("127.0.0.1", 0, db_path, token)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        request = urllib.request.Request(
+            f"{base_url}/api/detections/count?src_ip=192.168.56.1&since=2026-10-22T04%3A35%3A00Z",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["source"] == "LightGBM"
+        assert payload["src_ip"] == "192.168.56.1"
+        assert payload["count"] == 1
+
+        missing = urllib.request.Request(
+            f"{base_url}/api/detections/count",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(missing, timeout=3)
+        assert exc_info.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_fetch_detections_http_endpoint(tmp_path):
+    db_path = tmp_path / "ids.db"
+    make_db(db_path)
+    token = "test-token-abcdefghijklmnopqrstuvwxyz"
+
+    server = lightgbm_api.build_server("127.0.0.1", 0, db_path, token)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(f"{base_url}/api/detections", timeout=3)
+        assert exc_info.value.code == 401
+
+        request = urllib.request.Request(
+            f"{base_url}/api/detections?limit=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            assert response.status == 200
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["source"] == "LightGBM"
+        assert payload["count"] == 2
+        assert len(payload["items"]) == 2
+        assert payload["items"][0]["src_port"] == 55000
+
+        bad_limit = urllib.request.Request(
+            f"{base_url}/api/detections?limit=0",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(bad_limit, timeout=3)
+        assert exc_info.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 def test_fetch_attacks_returns_only_lightgbm_attacks(tmp_path):
     db_path = tmp_path / "ids.db"
     make_db(db_path)

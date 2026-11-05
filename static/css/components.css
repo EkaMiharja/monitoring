@@ -144,12 +144,6 @@
     color: var(--text-faint);
 }
 
-.badge .status-dot {
-    width: 6px;
-    height: 6px;
-    box-shadow: none;
-}
-
 .badge--neutral {
     border-color: var(--border);
     color: var(--text-muted);
@@ -190,14 +184,41 @@
     color: var(--text-faint);
 }
 
-.status-dot {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    flex: 0 0 auto;
-    border-radius: 50%;
-    background: currentColor;
-    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+.status-label {
+    display: inline;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.33;
+    text-transform: uppercase;
+}
+
+.status-label--ok,
+.status-label--success,
+.status-label--delivered {
+    color: var(--success);
+}
+
+.status-label--warning,
+.status-label--pending {
+    color: var(--warning);
+}
+
+.status-label--danger,
+.status-label--error,
+.status-label--failed {
+    color: var(--danger);
+}
+
+.status-label--info {
+    color: var(--info);
+}
+
+.status-label--empty,
+.status-label--unavailable {
+    color: var(--text-faint);
 }
 
 .flash-stack {
@@ -548,20 +569,6 @@
     color: var(--text);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
-}
-
-.inline-message {
-    margin-top: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-}
-
-.inline-message--error {
-    color: var(--danger);
-}
-
-.inline-message--success {
-    color: var(--success);
 }
 
 .spinner {

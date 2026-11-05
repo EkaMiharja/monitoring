@@ -58,14 +58,15 @@ def test_blocked_batch_sends_model_and_splits_large_payload(monkeypatch):
 
     first_text = calls[0][1]["text"]
     second_text = calls[1][1]["text"]
-    assert first_text.startswith("IP TERBLOKIR")
+    assert first_text.startswith("🚨 SERANGAN PERTAMA TERDETEKSI")
     assert "Model: LightGBM + Random Forest" in first_text
+    assert "Waktu serangan: 2026-10-23T07:33:31Z" in first_text
     assert "Auto unblock: Manual" in first_text
     assert "Total: 2 IP" in second_text
     assert "2. 192.0.2.12" in second_text
 
     assert len(records) == 12
-    assert records[0]["event"] == "IP Terblokir"
+    assert records[0]["event"] == "Serangan Pertama"
     assert records[0]["source_ip"] == "192.0.2.1"
     assert records[0]["status"] == "delivered"
     assert "Model: LightGBM + Random Forest" in records[0]["detail"]
@@ -84,15 +85,30 @@ def test_unblocked_batch_keeps_last_blocking_model(monkeypatch):
 
     ok, records = service.send_blocked_batch(
         "unblocked",
-        [_item("192.0.2.50", source="Fail2Ban")],
+        [
+            _item(
+                "192.0.2.50",
+                source="Fail2Ban",
+                first_seen="2026-10-23T07:33:31Z",
+                last_seen="2026-10-23T07:35:31Z",
+                duration_seconds=120,
+                attack_count=46,
+                attack_sources={"LightGBM": 24, "Random Forest": 22},
+            )
+        ],
     )
 
     assert ok is True
-    assert texts[0].startswith("IP TERUNBLOCK")
+    assert texts[0].startswith("✅ SERANGAN TERAKHIR / IP TERUNBLOCK")
     assert "Model: Fail2Ban" in texts[0]
+    assert "Serangan terakhir: 2026-10-23T07:35:31Z" in texts[0]
+    assert "Durasi: 2 menit 0 detik" in texts[0]
+    assert "Total serangan: 46 kali" in texts[0]
+    assert "Rincian: LightGBM 24 · Random Forest 22" in texts[0]
     assert "Status: tidak diblokir oleh model mana pun" in texts[0]
-    assert records[0]["event"] == "IP Terunblock"
+    assert records[0]["event"] == "Serangan Terakhir"
     assert "Model: Fail2Ban" in records[0]["detail"]
+    assert "Total serangan: 46 kali" in records[0]["detail"]
 
 
 def test_telegram_rejection_marks_batch_failed(monkeypatch):

@@ -1,4 +1,4 @@
-import { clear, el, makeBadge, setHidden } from "../dom.js";
+import { clear, el, makeStatusLabel, setHidden } from "../dom.js";
 import { capitalize, formatDateTime, formatShortTime } from "../format.js";
 import { setEmptyState, updatePanelMeta } from "../ui.js";
 
@@ -18,7 +18,7 @@ function renderItem(item) {
 
     const head = el("div", { className: "alert-item__head" });
     head.appendChild(el("span", { className: "alert-item__event", text: item.event || "Notifikasi" }));
-    head.appendChild(makeBadge(item.status || "pending", statusText(item.status)));
+    head.appendChild(makeStatusLabel(item.status || "pending", statusText(item.status)));
     entry.appendChild(head);
 
     const meta = el("div", { className: "alert-item__meta" });
@@ -42,17 +42,8 @@ export function updateTelegram(section) {
 
     clear(list);
     const items = section?.items || [];
-    const delivered = items.filter((item) => item.status === "delivered").length;
-    const failed = items.filter((item) => item.status === "failed").length;
 
     items.forEach((item) => list.appendChild(renderItem(item)));
-
-    const lastNode = root.querySelector("[data-telegram-last]");
-    if (lastNode) lastNode.textContent = items.length ? statusText(items[0].status) : "—";
-    const deliveredNode = root.querySelector("[data-telegram-delivered]");
-    if (deliveredNode) deliveredNode.textContent = String(delivered);
-    const failedNode = root.querySelector("[data-telegram-failed]");
-    if (failedNode) failedNode.textContent = String(failed);
 
     setHidden(list, items.length === 0);
     setEmptyState(

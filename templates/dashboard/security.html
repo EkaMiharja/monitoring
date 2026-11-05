@@ -28,18 +28,16 @@
 
             <header class="page-head page-head--single">
                 <div class="page-head__copy">
-                    <p class="page-kicker">Security operations</p>
                     <h1>Security Feed</h1>
                 </div>
             </header>
 
             <section class="section" aria-label="Feed keamanan global">
-                <div class="dashboard-grid security-grid">
-                    <section class="panel panel--span-5" id="panel-blocked" data-panel="blocked">
+                <div class="dashboard-grid">
+                    <section class="panel panel--span-12" id="panel-blocked" data-panel="blocked">
                         <header class="panel__head">
                             <div>
                                 <h2>Blocked IP</h2>
-                                <p class="panel__meta">Sumber: <span data-source>—</span></p>
                             </div>
                             <span class="badge badge--neutral" data-status>
                                 <span class="loader" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -64,12 +62,11 @@
                             </div>
                             <div class="empty-state" data-empty hidden>
                                 <p class="empty-state__title">Belum ada IP yang diblokir</p>
-                                <p class="empty-state__text">Daftar ini memuat IP yang diblokir LightGBM dan Fail2Ban.</p>
                             </div>
                         </div>
                     </section>
 
-                    <section class="panel panel--span-7" id="panel-attacks" data-panel="attacks">
+                    <section class="panel panel--span-12" id="panel-attacks" data-panel="attacks">
                         <header class="panel__head">
                             <div>
                                 <h2>Attack History</h2>
@@ -102,6 +99,7 @@
                                         <tr>
                                             <th scope="col">Waktu</th>
                                             <th scope="col">Source IP</th>
+                                            <th scope="col">Dst IP</th>
                                             <th scope="col">Jenis Serangan</th>
                                             <th scope="col">Detection</th>
                                             <th scope="col">Model</th>
@@ -133,32 +131,11 @@
                         </header>
                         <p class="panel__error" data-section-error hidden></p>
                         <div class="panel__body">
-                            <div class="telegram-layout">
-                                <div class="telegram-summary">
-                                    <div class="telegram-summary__stats">
-                                        <div>
-                                            <span>Terakhir</span>
-                                            <strong data-telegram-last>—</strong>
-                                        </div>
-                                        <div>
-                                            <span>Terkirim</span>
-                                            <strong data-telegram-delivered>0</strong>
-                                        </div>
-                                        <div>
-                                            <span>Gagal</span>
-                                            <strong data-telegram-failed>0</strong>
-                                        </div>
-                                    </div>
-                                    <p class="inline-message" id="telegram-test-message" role="status" hidden></p>
-                                    <button class="button button--ghost" id="telegram-test-btn" type="button">Kirim test alert</button>
-                                    <p class="panel__note">Token bot tidak pernah dikirim ke browser.</p>
-                                </div>
-                                <div class="telegram-feed">
-                                    <ul class="alert-list" data-telegram-list aria-label="Riwayat notifikasi Telegram"></ul>
-                                    <div class="empty-state" data-empty hidden>
-                                        <p class="empty-state__title">Belum ada riwayat notifikasi</p>
-                                        <p class="empty-state__text">Riwayat akan muncul setelah backend mencatat pengiriman alert.</p>
-                                    </div>
+                            <div class="telegram-feed">
+                                <ul class="alert-list" data-telegram-list aria-label="Riwayat notifikasi Telegram"></ul>
+                                <div class="empty-state" data-empty hidden>
+                                    <p class="empty-state__title">Belum ada riwayat notifikasi</p>
+                                    <p class="empty-state__text">Riwayat akan muncul setelah backend mencatat pengiriman alert.</p>
                                 </div>
                             </div>
                         </div>

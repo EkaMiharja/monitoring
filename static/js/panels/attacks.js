@@ -1,4 +1,4 @@
-import { clear, debounce, el, makeBadge, setHidden } from "../dom.js";
+import { clear, debounce, el, makeStatusLabel, setHidden } from "../dom.js";
 import { formatDateTime, formatShortTime } from "../format.js";
 import { setEmptyState, updatePanelMeta } from "../ui.js";
 
@@ -24,6 +24,18 @@ function blockingValue(value) {
     if (["blocked", "true", "banned", "yes", "1"].includes(text)) return true;
     if (["not blocked", "false", "no", "0", "unblocked"].includes(text)) return false;
     return null;
+}
+
+function destinationIp(value) {
+    const text = String(value || "").trim();
+    if (!text) return "—";
+    if (text.startsWith("[")) {
+        const end = text.indexOf("]");
+        return end > 0 ? text.slice(1, end) : text;
+    }
+    const parts = text.split(":");
+    if (parts.length === 2 && /^\d+$/.test(parts[1])) return parts[0];
+    return text;
 }
 
 function modelsInUse() {
@@ -141,11 +153,18 @@ function render() {
             }),
         );
         row.appendChild(el("td", { className: "mono", text: item.source_ip || "—" }));
+        row.appendChild(
+            el("td", {
+                className: "mono",
+                text: destinationIp(item.target),
+                attrs: { title: item.target || null },
+            }),
+        );
         row.appendChild(el("td", { text: item.attack_type || "—" }));
 
         const detectionCell = el("td");
         detectionCell.appendChild(
-            makeBadge(detectionTone(item.detection), item.detection || "—"),
+            makeStatusLabel(detectionTone(item.detection), item.detection || "—"),
         );
         row.appendChild(detectionCell);
 
@@ -157,7 +176,7 @@ function render() {
             blockingCell.textContent = "—";
         } else {
             blockingCell.appendChild(
-                makeBadge(blocked ? "danger" : "neutral", blocked ? "Blocked" : "Not blocked"),
+                makeStatusLabel(blocked ? "danger" : "neutral", blocked ? "Blocked" : "Not blocked"),
             );
         }
         row.appendChild(blockingCell);

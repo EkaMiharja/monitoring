@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from app import create_app
@@ -96,6 +97,42 @@ def test_ping_parse_unreachable():
     assert stats["avg"] is None
 
 
+def test_ping_runner_records_delay_and_loss_history(monkeypatch):
+    runner = make_ping(PING_COUNT=4)
+
+    class Result:
+        stdout = (
+            b"Minimum = 10ms, Maximum = 14ms, Average = 12ms\n"
+            b"Packets: Sent = 4, Received = 3, Lost = 1 (25% loss),"
+        )
+        stderr = b""
+
+    monkeypatch.setattr("services.delay.subprocess.run", lambda *args, **kwargs: Result())
+    runner.run()
+
+    assert runner.series()[-1]["value"] == 12.0
+    assert runner.loss_series()[-1]["value"] == 25.0
+    assert runner.meta["packet_loss_percent"] == 25.0
+    assert runner.meta["status"] == "success"
+
+
+def test_ping_runner_records_100_percent_loss_when_all_replies_missing(monkeypatch):
+    runner = make_ping(PING_COUNT=4)
+
+    class Result:
+        stdout = b"Packets: Sent = 4, Received = 0, Lost = 4 (100% loss),"
+        stderr = b""
+
+    monkeypatch.setattr("services.delay.subprocess.run", lambda *args, **kwargs: Result())
+    runner.run()
+
+    assert runner.series() == []
+    assert runner.loss_series()[-1]["value"] == 100.0
+    assert runner.meta["status"] == "failed"
+    assert runner.meta["packet_loss_percent"] == 100.0
+    assert "ICMP tidak dijawab" in runner.error
+
+
 def test_qos_run_endpoints_unavailable_in_demo(auth_client):
     assert auth_client.post("/api/iperf3/run").status_code == 409
     assert auth_client.post("/api/delay/run").status_code == 409
@@ -116,6 +153,8 @@ def test_live_qos_configured_but_not_run(tmp_path):
             "DELAY_API_URL": "",
             "QOS_VMS": "randomforest-vm",
             "QOS_TARGETS": {"randomforest-vm": "192.0.2.1"},
+            "QOS_AUTO_INTERVAL_SECONDS": 12,
+            "QOS_AUTO_IPERF3_PROTOCOL": "udp",
             "FLOW_FEATURES_API_URL": "",
             "QOS_SOURCE_MODE": "laptop",
         }
@@ -134,6 +173,13 @@ def test_live_qos_configured_but_not_run(tmp_path):
     assert payload["qos"]["test"]["status"] == "unavailable"
     assert payload["qos"]["delay_test"] is None
     assert payload["qos"]["metrics"]["throughput"]["stats"]["count"] == 0
+    assert payload["qos"]["vm_status"]["probe_interval_seconds"] == 12
+    assert payload["qos"]["sources"] == {
+        "delay": "ICMP ping dari laptop",
+        "throughput": "iperf3 UDP dari laptop",
+        "jitter": "iperf3 UDP dari laptop",
+        "packet_loss": "ICMP ping dari laptop",
+    }
 
 
 def test_live_qos_measured_per_vm(monkeypatch, tmp_path):
@@ -195,6 +241,46 @@ def test_live_qos_measured_per_vm(monkeypatch, tmp_path):
     payload = client.get("/api/overview?vm=fail2ban-vm").get_json()
     assert payload["qos"]["status"] == "unavailable"
     assert "belum dikonfigurasi" in payload["qos"]["error"]
+
+
+def test_live_laptop_mode_prefers_icmp_loss_with_udp_fallback(tmp_path):
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-qos-loss.db"),
+            "SECRET_KEY": "live-qos-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": True,
+            "IPERF3_RESULT_URL": "",
+            "DELAY_API_URL": "",
+            "QOS_VMS": "randomforest-vm",
+            "QOS_TARGETS": {"randomforest-vm": "192.0.2.11"},
+            "FLOW_FEATURES_API_URL": "",
+            "QOS_SOURCE_MODE": "laptop",
+        }
+    )
+    provider = app.extensions["monitoring_provider"]
+    runners = provider.qos_runners["randomforest-vm"]
+    timestamp = _iso(datetime.now(timezone.utc))
+
+    with runners["ping"].lock:
+        runners["ping"].loss_history.append({"t": timestamp, "value": 25.0})
+    with runners["iperf3"].lock:
+        runners["iperf3"].history["packet_loss"].append(
+            {"t": timestamp, "value": 2.5}
+        )
+
+    series_map, loss_source = provider._qos_series("randomforest-vm")
+    assert loss_source == "icmp"
+    assert series_map["packet_loss"][-1]["value"] == 25.0
+
+    with runners["ping"].lock:
+        runners["ping"].loss_history.clear()
+
+    series_map, loss_source = provider._qos_series("randomforest-vm")
+    assert loss_source == "udp"
+    assert series_map["packet_loss"][-1]["value"] == 2.5
 
 
 def test_manual_qos_actions_use_selected_vm(monkeypatch, tmp_path):
@@ -440,6 +526,154 @@ def test_live_qos_series_built_from_vm_history(monkeypatch, tmp_path):
     assert metrics["throughput"]["series"][-1]["value"] == 689.0
     assert metrics["delay"]["stats"]["count"] == 12
     assert metrics["delay"]["stats"]["max"] == 12.0
+
+
+def test_iperf3_runner_stamps_wib(monkeypatch):
+    from services import iperf3 as iperf_module
+
+    class Result:
+        returncode = 0
+        stderr = b""
+
+        def __init__(self):
+            payload = {"end": {"sum_received": {"bits_per_second": 5_000_000}}}
+            self.stdout = json.dumps(payload).encode()
+
+    monkeypatch.setattr(
+        iperf_module.subprocess, "run", lambda *a, **k: Result()
+    )
+
+    runner = make_iperf(IPERF3_ATTEMPTS=1, IPERF3_RETRY_DELAY_SECONDS=0)
+    runner.run()
+
+    stamp = runner.series("throughput")[-1]["t"]
+    assert stamp.endswith("+07:00"), stamp
+    assert runner.meta["timestamp"].endswith("+07:00")
+
+
+def test_ping_runner_stamps_wib(monkeypatch):
+    from services import delay as delay_module
+
+    class Result:
+        returncode = 0
+        stderr = b""
+        stdout = (
+            b"PING 10.90.19.120 (10.90.19.120): 56 data bytes\n"
+            b"--- 10.90.19.120 ping statistics ---\n"
+            b"10 packets transmitted, 10 packets received, 0.0% packet loss\n"
+            b"rtt min/avg/max/mdev = 0.100/0.200/0.300/0.010 ms\n"
+        )
+
+    monkeypatch.setattr(
+        delay_module.subprocess, "run", lambda *a, **k: Result()
+    )
+
+    runner = make_ping()
+    runner.run()
+
+    stamp = runner.series()[-1]["t"]
+    assert stamp.endswith("+07:00"), stamp
+    assert runner.meta["timestamp"].endswith("+07:00")
+
+
+def test_iperf3_runner_retries_after_control_reset(monkeypatch):
+    from services import iperf3 as iperf_module
+
+    calls = {"count": 0}
+
+    class Result:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = b""
+
+    def fake_run(command, capture_output=True, timeout=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return Result(1, b'{"error": "Connection reset by peer"}')
+        payload = {"end": {"sum_received": {"bits_per_second": 5_000_000}}}
+        return Result(0, json.dumps(payload).encode())
+
+    monkeypatch.setattr(iperf_module.subprocess, "run", fake_run)
+
+    runner = make_iperf(IPERF3_ATTEMPTS=2, IPERF3_RETRY_DELAY_SECONDS=0)
+    runner.run()
+
+    assert calls["count"] == 2
+    assert runner.error is None
+    assert runner.series("throughput")[-1]["value"] == 5.0
+
+
+def test_live_qos_stale_vm_probe_keeps_latest_sample(monkeypatch, tmp_path):
+    from services.providers import live as live_module
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    probe = {
+        "timestamp": _iso(old),
+        "target": "192.0.2.11",
+        "delay_ms": 8.75,
+        "jitter_ms": 1.5,
+        "packet_loss_percent": 0.0,
+        "throughput_mbps": 123.4,
+        "duration_seconds": 7.0,
+        "ok": True,
+    }
+
+    def fake_get(url, timeout, headers):
+        if url.endswith("/api/qos"):
+            return FakeResponse(
+                {
+                    "probe": probe,
+                    "history": [probe | {"t": probe["timestamp"]}],
+                    "load": {"load_1m": 1.0},
+                    "capture_backlog": {"files": 0, "oldest_age_seconds": None},
+                }
+            )
+        return FakeResponse({"items": [], "features": []})
+
+    monkeypatch.setattr(live_module.requests, "get", fake_get)
+
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "live-qos-stale.db"),
+            "SECRET_KEY": "live-qos-test",
+            "CSRF_ENABLED": False,
+            "DATA_MODE": "live",
+            "IPERF3_ENABLED": True,
+            "IPERF3_RESULT_URL": "",
+            "DELAY_API_URL": "",
+            "QOS_VMS": "randomforest-vm",
+            "QOS_TARGETS": {"randomforest-vm": "192.0.2.11"},
+            "FLOW_FEATURES_API_URL": "http://192.0.2.11:8080/api/features",
+            "QOS_SOURCE_MODE": "vm",
+        }
+    )
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["user_id"] = 1
+        session["username"] = "qos-tester"
+
+    qos = client.get("/api/overview?vm=randomforest-vm").get_json()["qos"]
+
+    assert qos["status"] == "ok"
+    assert len(qos["metrics"]["delay"]["series"]) == 1
+    assert qos["metrics"]["delay"]["series"][-1]["value"] == 8.75
+    assert "di luar rentang" in qos["source"]
+    assert qos["latest_sample"]["stale"] is True
+    assert qos["test"]["timestamp"] == probe["timestamp"]
+    assert qos["test"]["server"] == "192.0.2.11"
+    assert qos["delay_test"]["delay_ms"] == 8.75
 
 
 def test_fail2ban_qos_uses_fail2ban_api_base_and_token(tmp_path):

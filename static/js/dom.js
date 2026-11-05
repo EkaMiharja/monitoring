@@ -56,11 +56,11 @@ export function statusLabel(status) {
     return PANEL_LABELS[status] || status || "Tidak diketahui";
 }
 
-export function makeBadge(status, label) {
-    const badge = el("span", { className: `badge badge--${badgeTone(status)}` });
-    badge.appendChild(el("span", { className: "status-dot", attrs: { "aria-hidden": "true" } }));
-    badge.appendChild(el("span", { text: label || statusLabel(status) }));
-    return badge;
+export function makeStatusLabel(status, label) {
+    return el("span", {
+        className: `status-label status-label--${badgeTone(status)}`,
+        text: label || statusLabel(status),
+    });
 }
 
 export function applyBadge(badge, status, label) {

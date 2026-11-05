@@ -9,27 +9,6 @@ let featureSection = null;
 let featureRoot = null;
 let selectedFeature = "";
 
-const featureFormatter = new Intl.NumberFormat("id-ID", {
-    maximumFractionDigits: 3,
-});
-
-function formatFeatureValue(value) {
-    const number = toNumber(value);
-    if (number === null) return "—";
-    const absolute = Math.abs(number);
-    if (absolute !== 0 && (absolute < 0.001 || absolute >= 1e9)) {
-        return number.toExponential(3);
-    }
-    return featureFormatter.format(number);
-}
-
-function formatDelta(value) {
-    const number = toNumber(value);
-    if (number === null) return "—";
-    if (number > 0) return `+${formatFeatureValue(number)}`;
-    return formatFeatureValue(number);
-}
-
 function syncFeatureOptions(select, features, preferred) {
     const names = features.map((feature) => feature?.name).filter(Boolean);
     const existing = Array.from(select.options).map((option) => option.value);
@@ -64,8 +43,6 @@ function renderFeatureChart() {
     const chartWrap = featureRoot.querySelector("[data-traffic-chart]");
     const empty = featureRoot.querySelector("[data-feature-empty]");
     const emptyText = empty?.querySelector(".empty-state__text");
-    const currentNode = featureRoot.querySelector("[data-feature-current]");
-    const deltaNode = featureRoot.querySelector("[data-feature-delta]");
     const labelNode = featureRoot.querySelector("[data-feature-label]");
     const canvas = document.getElementById("traffic-chart");
     const feature =
@@ -74,15 +51,11 @@ function renderFeatureChart() {
         features[0] ||
         null;
     const points = Array.isArray(feature?.series) ? feature.series : [];
-    const delta = toNumber(feature?.delta);
 
     if (feature?.name) {
         selectedFeature = feature.name;
         if (select.value !== feature.name) select.value = feature.name;
     }
-
-    setText(currentNode, formatFeatureValue(feature?.current));
-    setText(deltaNode, formatDelta(delta));
 
     const featureCount = Number.isFinite(featureSection?.feature_count)
         ? featureSection.feature_count
@@ -93,12 +66,6 @@ function renderFeatureChart() {
         labelNode,
         modelLabel ? `Fitur ${modelLabel} (${featureCount})` : `Fitur flow (${featureCount})`,
     );
-
-    const deltaStat = deltaNode?.closest(".flow-stat");
-    if (deltaStat) {
-        deltaStat.classList.toggle("is-up", delta !== null && delta > 0);
-        deltaStat.classList.toggle("is-down", delta !== null && delta < 0);
-    }
 
     const hasData = Boolean(featureWithData(features));
     const hasPoints = points.length > 0;
@@ -158,8 +125,6 @@ function renderFeaturePanel(root, section) {
     setHidden(legend, true);
 
     setText(root.querySelector("[data-flow-time]"), formatDateTime(sample.detected_at));
-    setText(root.querySelector("[data-flow-source]"), sample.source_ip || "—");
-    setText(root.querySelector("[data-flow-target]"), sample.target || "—");
     setText(root.querySelector("[data-flow-auth]"), sample.auth_result || "—");
 
     const fallback = features.find((feature) => feature?.name)?.name || "";

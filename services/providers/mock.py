@@ -13,6 +13,7 @@ QOS_SOURCE = "iperf3 + delay probe per VM (DEMO)"
 RESOURCE_SOURCE = "Glances (DEMO)"
 FAIL2BAN_SOURCE = "Fail2Ban (DEMO)"
 ATTACK_SOURCE = "Log deteksi LightGBM / Random Forest (DEMO)"
+DETECTION_SOURCE = "Log deteksi LightGBM / Random Forest (DEMO)"
 
 VM_PROFILES = {
     "randomforest-vm": {
@@ -82,6 +83,7 @@ class MockProvider(MonitoringProvider):
         self._seed_history()
         self._blocked = self._seed_blocked()
         self._attacks = self._seed_attacks()
+        self._detections = self._seed_detections()
 
     def _resolve_vm(self, vm):
         selected = vm or self.default_vm
@@ -238,7 +240,9 @@ class MockProvider(MonitoringProvider):
             {
                 "detected_at": iso(now - timedelta(minutes=minutes)),
                 "source_ip": source_ip,
-                "target": "ssh",
+                "target": (
+                    "192.168.56.103:22" if model == "LightGBM" else "192.168.56.102:22"
+                ),
                 "attack_type": "SSH Brute Force",
                 "detection": "Malicious",
                 "model": model,
@@ -246,6 +250,73 @@ class MockProvider(MonitoringProvider):
             }
             for minutes, source_ip, model, blocking in rows
         ]
+
+    def _seed_detections(self):
+        now = utc_now()
+        items = []
+        for index in range(400):
+            is_attack = index % 5 == 0
+            model = "LightGBM" if index % 2 == 0 else "RandomForestClassifier"
+            source = "LightGBM" if model == "LightGBM" else "Random Forest"
+            items.append(
+                {
+                    "id": 9000 - index,
+                    "detected_at": iso(now - timedelta(seconds=index * 45)),
+                    "src_ip": f"203.0.113.{10 + (index % 40)}",
+                    "dst_ip": "192.168.56.103",
+                    "src_port": 40000 + (index % 20000),
+                    "dst_port": 22,
+                    "protocol": "6.0",
+                    "prediction": "SSH-Bruteforce" if is_attack else "Benign",
+                    "attack_probability": round(
+                        0.95 + (index % 5) * 0.01 if is_attack else 0.01 + (index % 7) * 0.002,
+                        4,
+                    ),
+                    "confidence": round(
+                        0.97 + (index % 3) * 0.005 if is_attack else 0.98 + (index % 2) * 0.005,
+                        4,
+                    ),
+                    "model": model,
+                    "status": "DETECTED",
+                    "source": source,
+                }
+            )
+        return items
+
+    def get_detection_logs(self, limit=400):
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 400
+        limit = max(1, min(limit, 400))
+        items = self._detections[:limit]
+        return {
+            "status": "ok" if items else "empty",
+            "source": DETECTION_SOURCE,
+            "error": None,
+            "items": items,
+            "warnings": [],
+        }
+
+    def count_attacks(self, src_ip, since=None):
+        src_ip = str(src_ip or "").strip()
+        if not src_ip:
+            return {"count": None, "sources": {}, "warnings": []}
+        cutoff = parse_iso(since) if since else None
+        counts = {}
+        total = 0
+        for item in self._detections:
+            if item.get("src_ip") != src_ip:
+                continue
+            if item.get("prediction") != "SSH-Bruteforce":
+                continue
+            detected_at = parse_iso(item.get("detected_at"))
+            if cutoff is not None and (detected_at is None or detected_at < cutoff):
+                continue
+            label = str(item.get("source") or item.get("model") or "DEMO")
+            counts[label] = counts.get(label, 0) + 1
+            total += 1
+        return {"count": total, "sources": counts, "warnings": []}
 
     def get_overview(self, vm=None, window_seconds=None):
         selected = self._resolve_vm(vm)

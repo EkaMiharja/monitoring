@@ -1,14 +1,15 @@
 from flask import Blueprint, current_app, jsonify, request
 
-from auth.decorators import login_required
+from auth.decorators import login_or_token_required, login_required
 from config import CHART_RANGES, DEFAULT_CHART_RANGE, VM_SPECS
 from security import csrf_protect
-from utils import iso, utc_now
+from utils import iso, utc_now, wib_iso
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
 SECTIONS = ("traffic", "qos", "resources", "blocked_ips", "attacks", "telegram")
 VM_LABEL_KEYS = {spec["id"]: spec["label_key"] for spec in VM_SPECS}
+DETECTION_LOG_MAX_LIMIT = 400
 
 
 def _collect_errors(payload):
@@ -40,7 +41,7 @@ def _collect_errors(payload):
 
 
 @bp.get("/overview")
-@login_required
+@login_or_token_required
 def overview():
     provider = current_app.extensions["monitoring_provider"]
     vm = (request.args.get("vm") or "").strip() or None
@@ -101,6 +102,138 @@ def overview():
     if notifier is not None:
         notifier.observe(payload.get("blocked_ips") or {})
     return jsonify(payload)
+
+
+@bp.get("/detections")
+@login_or_token_required
+def detection_logs():
+    provider = current_app.extensions["monitoring_provider"]
+    raw_limit = request.args.get("limit", "").strip()
+    if raw_limit:
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return (
+                jsonify(
+                    error="invalid_limit",
+                    message="limit harus berupa bilangan bulat.",
+                ),
+                400,
+            )
+    else:
+        try:
+            limit = int(current_app.config.get("DETECTION_LOG_LIMIT", DETECTION_LOG_MAX_LIMIT))
+        except (TypeError, ValueError):
+            limit = DETECTION_LOG_MAX_LIMIT
+        limit = max(1, min(limit, DETECTION_LOG_MAX_LIMIT))
+
+    if limit < 1 or limit > DETECTION_LOG_MAX_LIMIT:
+        return (
+            jsonify(
+                error="invalid_limit",
+                message=f"limit harus antara 1 dan {DETECTION_LOG_MAX_LIMIT}.",
+            ),
+            400,
+        )
+
+    try:
+        payload = provider.get_detection_logs(limit=limit)
+    except Exception:
+        current_app.logger.exception("Gagal membangun data detection log")
+        return (
+            jsonify(
+                error="detections_failed",
+                message="Gagal membangun data detection log. Periksa log backend.",
+            ),
+            500,
+        )
+
+    payload["generated_at"] = iso(utc_now())
+    payload["data_mode"] = provider.data_mode
+    payload["poll_interval_ms"] = current_app.config["POLL_INTERVAL_MS"]
+    payload["limit"] = limit
+    payload.setdefault("warnings", [])
+    return jsonify(payload)
+
+
+@bp.get("/qos")
+@login_or_token_required
+def qos_history():
+    """History metrik QoS per VM (sumber mengikuti QOS_SOURCE_MODE)."""
+    provider = current_app.extensions["monitoring_provider"]
+    vm = (request.args.get("vm") or "").strip() or None
+    if vm is not None and vm not in provider.vm_ids:
+        return (
+            jsonify(
+                error="invalid_vm",
+                message=f"VM tidak dikenal: {vm}",
+                available_vms=list(provider.vm_ids),
+            ),
+            400,
+        )
+
+    range_key = (request.args.get("range") or DEFAULT_CHART_RANGE).strip().lower()
+    if range_key not in CHART_RANGES:
+        return (
+            jsonify(
+                error="invalid_range",
+                message=f"Rentang grafik tidak dikenal: {range_key}",
+                available_ranges=list(CHART_RANGES),
+            ),
+            400,
+        )
+    window_seconds = CHART_RANGES[range_key]
+
+    try:
+        payload = provider.get_overview(vm=vm, window_seconds=window_seconds)
+    except Exception:
+        current_app.logger.exception("Gagal membangun data QoS")
+        return (
+            jsonify(
+                error="qos_failed",
+                message="Gagal membangun data QoS. Periksa log backend.",
+            ),
+            500,
+        )
+
+    selected = payload.get("vm") or provider.default_vm
+    qos_vm = current_app.config.get("QOS_VM") or provider.default_vm
+    if qos_vm not in provider.vm_ids:
+        qos_vm = provider.default_vm
+
+    section = payload.get("qos") or {}
+    result = {
+        "vm": {
+            "id": selected,
+            "label": current_app.config.get(VM_LABEL_KEYS.get(selected, ""), selected),
+        },
+        "qos_vm": {
+            "id": qos_vm,
+            "label": current_app.config.get(VM_LABEL_KEYS.get(qos_vm, ""), qos_vm),
+        },
+        "qos_vms": sorted(getattr(provider, "qos_targets", {}) or {}),
+        "generated_at": wib_iso(),
+        "data_mode": provider.data_mode,
+        "source_mode": (
+            provider._qos_source_mode()
+            if hasattr(provider, "_qos_source_mode")
+            else "demo"
+        ),
+        "range": range_key,
+        "stats_window_seconds": window_seconds,
+        "status": section.get("status"),
+        "source": section.get("source"),
+        "error": section.get("error"),
+        "metrics": section.get("metrics") or {},
+        "sources": section.get("sources") or {},
+        "vm_status": section.get("vm_status"),
+        "test": section.get("test"),
+        "delay_test": section.get("delay_test"),
+        "latest_sample": section.get("latest_sample"),
+        "auto": section.get("auto"),
+        "errors": [],
+    }
+    return jsonify(result)
 
 
 @bp.post("/telegram/test")

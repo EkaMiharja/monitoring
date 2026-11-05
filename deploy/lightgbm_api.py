@@ -29,6 +29,7 @@ DEFAULT_MODEL = "LightGBM"
 ATTACK_PREDICTION = "SSH-Bruteforce"
 ATTACK_LABEL = "SSH Brute Force"
 DEFAULT_LIMIT = 50
+DETECTION_DEFAULT_LIMIT = 30
 MAX_LIMIT = 200
 DEFAULT_FEATURES_DIR = BASE_DIR / "capture" / "processed"
 FEATURE_NAMES = (
@@ -95,6 +96,23 @@ def iso_utc(value):
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z")
     )
+
+
+def sqlite_utc(value):
+    """Convert an ISO-8601 value to SQLite's naive UTC timestamp format."""
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    try:
+        if text.endswith("Z"):
+            parsed = datetime.fromisoformat(text[:-1] + "+00:00")
+        else:
+            parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("since harus berupa tanggal ISO-8601.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def parse_limit(value, default=DEFAULT_LIMIT, maximum=MAX_LIMIT):
@@ -251,6 +269,93 @@ def is_authorized(header, expected_token):
     if not separator or scheme.lower() != "bearer":
         return False
     return hmac.compare_digest(presented.strip(), expected_token)
+
+
+def fetch_detections(db_path, limit=DETECTION_DEFAULT_LIMIT):
+    """Return recent detection log rows without filtering prediction or model."""
+    limit = parse_limit(limit, default=DETECTION_DEFAULT_LIMIT)
+    path = Path(db_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Database tidak ditemukan: {path}")
+
+    uri = f"file:{quote(str(path.resolve()), safe='/')}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=5)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                timestamp,
+                src_ip,
+                dst_ip,
+                src_port,
+                dst_port,
+                protocol,
+                prediction,
+                attack_probability,
+                confidence,
+                model,
+                status
+            FROM detection_logs
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": row["id"],
+                "detected_at": iso_utc(row["timestamp"]),
+                "src_ip": row["src_ip"],
+                "dst_ip": row["dst_ip"],
+                "src_port": row["src_port"],
+                "dst_port": row["dst_port"],
+                "protocol": row["protocol"],
+                "prediction": row["prediction"],
+                "attack_probability": row["attack_probability"],
+                "confidence": row["confidence"],
+                "model": row["model"],
+                "status": row["status"],
+                "source": "LightGBM",
+            }
+        )
+    return items
+
+
+def count_attacks(db_path, src_ip, since=None):
+    """Count SSH-Bruteforce detections for one source IP."""
+    src_ip = (src_ip or "").strip()
+    if not src_ip:
+        raise ValueError("src_ip wajib diisi.")
+    since_text = sqlite_utc(since)
+    path = Path(db_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Database tidak ditemukan: {path}")
+
+    uri = f"file:{quote(str(path.resolve()), safe='/')}?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=5)
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        query = """
+            SELECT COUNT(*)
+            FROM detection_logs
+            WHERE src_ip = ? AND prediction = ?
+        """
+        params = [src_ip, ATTACK_PREDICTION]
+        if since_text:
+            query += " AND timestamp >= ?"
+            params.append(since_text)
+        row = connection.execute(query, params).fetchone()
+    finally:
+        connection.close()
+    return int(row[0] or 0)
 
 
 def fetch_attacks(db_path, limit=DEFAULT_LIMIT, model=DEFAULT_MODEL):
@@ -601,7 +706,13 @@ class LightGBMRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, collect_qos_status())
             return
-        if parsed.path not in {"/api/attacks", "/api/features", "/api/blocked"}:
+        if parsed.path not in {
+            "/api/attacks",
+            "/api/detections",
+            "/api/detections/count",
+            "/api/features",
+            "/api/blocked",
+        }:
             self._send_json(404, {"error": "not_found"})
             return
         if not self._authorized():
@@ -612,13 +723,91 @@ class LightGBMRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/api/detections/count":
+            params = parse_qs(parsed.query)
+            src_ip = (params.get("src_ip", [""])[0] or "").strip()
+            since = params.get("since", [None])[0]
+            if not src_ip:
+                self._send_json(
+                    400,
+                    {"error": "invalid_src_ip", "message": "src_ip wajib diisi."},
+                )
+                return
+            try:
+                count = count_attacks(self.server.db_path, src_ip, since)
+            except ValueError as exc:
+                self._send_json(
+                    400,
+                    {"error": "invalid_since", "message": str(exc)},
+                )
+                return
+            except FileNotFoundError:
+                self._send_json(
+                    503,
+                    {"error": "database_unavailable", "message": "Database tidak ditemukan."},
+                )
+                return
+            except sqlite3.Error:
+                self.log_error("database error while counting detections")
+                self._send_json(
+                    500,
+                    {"error": "database_error", "message": "Gagal membaca database."},
+                )
+                return
+
+            self._send_json(
+                200,
+                {
+                    "generated_at": utc_now_iso(),
+                    "source": "LightGBM",
+                    "src_ip": src_ip,
+                    "since": since,
+                    "count": count,
+                },
+            )
+            return
+
         raw_limit = parse_qs(parsed.query).get("limit", [None])[0]
+        default_limit = (
+            DETECTION_DEFAULT_LIMIT
+            if parsed.path == "/api/detections"
+            else DEFAULT_LIMIT
+        )
         try:
-            limit = parse_limit(raw_limit)
+            limit = parse_limit(raw_limit, default=default_limit)
         except ValueError as exc:
             self._send_json(
                 400,
                 {"error": "invalid_limit", "message": str(exc)},
+            )
+            return
+
+        if parsed.path == "/api/detections":
+            try:
+                items = fetch_detections(self.server.db_path, limit)
+            except FileNotFoundError:
+                self._send_json(
+                    503,
+                    {"error": "database_unavailable", "message": "Database tidak ditemukan."},
+                )
+                return
+            except sqlite3.Error:
+                self.log_error("database error while reading detections")
+                self._send_json(
+                    500,
+                    {"error": "database_error", "message": "Gagal membaca database."},
+                )
+                return
+
+            self._send_json(
+                200,
+                {
+                    "generated_at": utc_now_iso(),
+                    "source": "LightGBM",
+                    "model": self.server.model,
+                    "count": len(items),
+                    "items": items,
+                },
             )
             return
 

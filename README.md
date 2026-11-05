@@ -6,18 +6,18 @@ Implementasi mengikuti `PRD2_revisi.md`, `task_revisi.md`, dan `skill_revisi.md`
 
 ## Panduan Menjalankan Setelah Laptop Menyala
 
-Bagian ini adalah urutan operasional dari laptop baru boot sampai dashboard live. Ketiga VM diakses langsung lewat Wi-Fi/LAN yang sama (tanpa tunnel/Tailscale); proses dashboard Flask masih dijalankan manual.
+Bagian ini adalah urutan operasional dari laptop baru boot sampai dashboard live. Ketiga VM diakses lewat rute Tailscale `192.168.1.0/24` (Windows route ke `100.100.100.100`); proses dashboard Flask masih dijalankan manual.
 
 > Untuk integrasi VM, gunakan `DATA_MODE=live` di `.env`. Nilai default `.env.example` adalah `demo`, yang menampilkan data simulasi berlabel DEMO.
 
 ### 1. Pastikan VM dan service-nya aktif
 
-VM yang dipakai saat ini: LightGBM `192.168.100.69`, random forest `192.168.100.70`, dan Fail2Ban `192.168.100.71`. Setelah VM selesai boot, cek service dari laptop:
+VM yang dipakai saat ini: LightGBM `192.168.1.6`, random forest `192.168.1.7`, dan Fail2Ban `192.168.1.10`. Setelah VM selesai boot, cek service dari laptop:
 
 ```powershell
-ssh -i $env:USERPROFILE\.ssh\ids_audit server@192.168.100.69   # lightgbm
-ssh -i $env:USERPROFILE\.ssh\ids_audit server@192.168.100.70   # random forest
-ssh -i $env:USERPROFILE\.ssh\ids_audit server@192.168.100.71   # fail2ban
+ssh -i $env:USERPROFILE\.ssh\ids_audit server@192.168.1.6   # lightgbm
+ssh -i $env:USERPROFILE\.ssh\ids_audit server@192.168.1.7   # random forest
+ssh -i $env:USERPROFILE\.ssh\ids_audit server@192.168.1.10   # fail2ban
 ```
 
 Di dalam SSH:
@@ -29,7 +29,7 @@ systemctl is-active ids-tcpdump.service ids-pcap-worker.service ids-feature-work
 loginctl show-user server | grep Linger
 ```
 
-Yang diharapkan: `ids-rf-api` dan `ids-iperf3` bernilai `active`/`enabled`, service capture dan Glances `active`, serta `Linger=yes`. `Linger=yes` membuat service user tetap start setelah reboot tanpa menunggu login. Di VM Fail2Ban, cek `glances-web`, `ids-fail2ban-api`, dan `qos-probe-fail2ban.timer` (semua system service).
+Yang diharapkan: `ids-rf-api` dan `ids-iperf3` bernilai `active`/`enabled`, service capture dan Glances `active`, serta `Linger=yes`. `Linger=yes` membuat service user tetap start setelah reboot tanpa menunggu login. Di VM Fail2Ban, cek `glances-web`, `ids-fail2ban-api`, `ids-iperf3-local`/`ids-iperf3-local-udp`, dan timer `qos-probe-fail2ban.timer` (harus **active/enabled**).
 
 Jika service user belum aktif:
 
@@ -39,34 +39,34 @@ systemctl --user start ids-rf-api.service ids-iperf3.service
 
 Service sistem yang belum aktif dapat dijalankan dengan `sudo systemctl start <nama-service>`.
 
-### 2. Pastikan akses LAN ke ketiga VM
+### 2. Pastikan akses ke ketiga VM
 
-Tidak ada tunnel/Tailscale. Dashboard mengakses API dan Glances langsung ke IP VM di Wi-Fi/LAN yang sama:
+Akses memakai rute Tailscale (bukan bridge LAN lokal). Dashboard mengakses API dan Glances ke IP VM di `192.168.1.0/24`:
 
 | Dari laptop | Tujuan | Fungsi |
 |---|---|---|
-| `192.168.100.69:8080` | LightGBM API | `/api/attacks`, `/api/features`, dan `/api/blocked` (Bearer) |
-| `192.168.100.69:61208` | Glances LightGBM | quicklook (CPU/memori) |
-| `192.168.100.70:8080` | RF API | `/api/attacks` dan `/api/features` |
-| `192.168.100.70:61208` | Glances RF | quicklook (CPU/memori) |
-| `192.168.100.71:8080` | Fail2Ban API | `/api/blocked`, `/api/attacks`, dan `/api/qos` (Bearer) |
-| `192.168.100.71:61208` | Glances Fail2Ban | quicklook (CPU/memori) |
-| `192.168.100.69` / `.70:5201` | iperf3 | throughput/jitter; packet loss dari ICMP ping |
+| `192.168.1.6:8080` | LightGBM API | `/api/attacks`, `/api/detections`, `/api/detections/count`, `/api/features`, dan `/api/blocked` (Bearer) |
+| `192.168.1.6:61208` | Glances LightGBM | quicklook (CPU/memori) |
+| `192.168.1.7:8080` | RF API | `/api/attacks`, `/api/detections`, `/api/detections/count`, dan `/api/features` |
+| `192.168.1.7:61208` | Glances RF | quicklook (CPU/memori) |
+| `192.168.1.10:8080` | Fail2Ban API | `/api/blocked`, `/api/attacks`, dan `/api/qos` (Bearer) |
+| `192.168.1.10:61208` | Glances Fail2Ban | quicklook (CPU/memori) |
+| `192.168.1.6` / `.7` / `.10:5202` | iperf3 UDP | throughput + jitter; packet loss dari ICMP ping |
 
 Cek statusnya:
 
 ```powershell
-Test-NetConnection 192.168.100.69 -Port 8080
-Test-NetConnection 192.168.100.69 -Port 61208
-Test-NetConnection 192.168.100.70 -Port 8080
-Test-NetConnection 192.168.100.70 -Port 61208
-Test-NetConnection 192.168.100.71 -Port 8080
-Test-NetConnection 192.168.100.71 -Port 61208
-curl.exe http://192.168.100.69:8080/health
-curl.exe http://192.168.100.70:8080/health
-curl.exe http://192.168.100.71:8080/health
-curl.exe http://192.168.100.69:61208/api/4/quicklook
-curl.exe http://192.168.100.71:61208/api/4/quicklook
+Test-NetConnection 192.168.1.6 -Port 8080
+Test-NetConnection 192.168.1.6 -Port 61208
+Test-NetConnection 192.168.1.7 -Port 8080
+Test-NetConnection 192.168.1.7 -Port 61208
+Test-NetConnection 192.168.1.10 -Port 8080
+Test-NetConnection 192.168.1.10 -Port 61208
+curl.exe http://192.168.1.6:8080/health
+curl.exe http://192.168.1.7:8080/health
+curl.exe http://192.168.1.10:8080/health
+curl.exe http://192.168.1.6:61208/api/4/quicklook
+curl.exe http://192.168.1.10:61208/api/4/quicklook
 ```
 
 `/health` harus mengembalikan `{"ok": true}`. Endpoint Glances harus mengembalikan JSON yang memuat `cpu` dan `mem`. Dashboard memakai `/api/4/quicklook` dan fallback ke `/api/3/quicklook` untuk Glances lama.
@@ -74,8 +74,8 @@ curl.exe http://192.168.100.71:61208/api/4/quicklook
 Jika IP VM berubah karena DHCP, cukup ganti satu baris di `.env` atau jalankan helper:
 
 ```powershell
-.\scripts\set_vm_host.ps1 192.168.100.69                      # VM lightgbm
-.\scripts\set_vm_host.ps1 -Variable RF_VM_HOST 192.168.100.70   # VM random forest
+.\scripts\set_vm_host.ps1 192.168.1.6                      # VM lightgbm
+.\scripts\set_vm_host.ps1 -Variable RF_VM_HOST 192.168.1.7   # VM random forest
 ```
 
 IP laptop tidak dikonfigurasi di mana pun; perubahan IP laptop tidak memerlukan edit `.env`. `ufw` di VM nonaktif, jadi tidak ada rule subnet/IP yang perlu diubah.
@@ -119,7 +119,7 @@ Setelah login, cek:
 - **QoS Monitoring** menampilkan sampel terakhir; tes manual bisa dijalankan dari tombol.
 - **System Resource** menampilkan CPU/memori dari Glances.
 - **Attack History** menampilkan hasil RF, LightGBM, dan ban Fail2Ban sebanyak 20 baris per halaman; filter model dan pagination bekerja di sisi klien atas maksimal 50 event, dan status blocking `—` muncul jika sumber tidak menyediakannya.
-- **Telegram Alerts** menampilkan riwayat di memori; test alert mengirim pesan jika token/chat ID diisi. Dengan `TELEGRAM_BLOCK_NOTIFY_ENABLED=true`, IP yang baru diblokir dan yang sudah lepas dari semua model ikut dikirim selama dashboard polling.
+- **Telegram Alerts** menampilkan riwayat di memori; test alert mengirim pesan jika token/chat ID diisi. Dengan `TELEGRAM_BLOCK_NOTIFY_ENABLED=true`, notifikasi dikirim sekali untuk serangan pertama dan sekali untuk serangan terakhir setelah IP hilang dari semua model selama `TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS`; pesan terakhir memuat total serangan per IP.
 
 Jika satu panel error, panel lain tetap berjalan. Pesan dan status sumber ditampilkan pada panel masing-masing.
 
@@ -141,7 +141,7 @@ Yang perlu disiapkan di laptop baru:
 - Python 3.13 dan virtual environment `.venv`.
 - iperf3 (WinGet) dan path binary di `IPERF3_BINARY`.
 - `.env` berisi `DATA_MODE=live`, `VM_HOST`, `RF_VM_HOST`, token, target ping, dan konfigurasi Telegram (`TELEGRAM_BLOCK_NOTIFY_ENABLED=true` bila notifikasi blokir otomatis dipakai).
-- Akses Wi-Fi/LAN ke `192.168.100.69` (lightgbm) dan `192.168.100.70` (random forest).
+- Akses Wi-Fi/LAN ke `192.168.1.6` (lightgbm) dan `192.168.1.7` (random forest).
 - Tidak perlu OpenSSH key, Scheduled Task tunnel, atau konfigurasi IP laptop.
 
 ### 6. Troubleshooting cepat
@@ -149,19 +149,19 @@ Yang perlu disiapkan di laptop baru:
 | Gejala | Cek pertama |
 |---|---|
 | Port 5000 tidak bisa dibuka | Proses `app.py` berjalan? Lihat error di console atau `%TEMP%\ssh-sentinel.err`. |
-| `http://192.168.100.70:8080/health` gagal | VM/RF API mati atau IP DHCP berubah; cek `RF_VM_HOST` di `.env`. |
+| `http://192.168.1.7:8080/health` gagal | VM/RF API mati atau IP DHCP berubah; cek `RF_VM_HOST` di `.env`. |
 | Glances `61208` gagal | Service Glances VM dan `GLANCES_*_URL` di `.env`. |
 | Attack History kosong | Model/prediction di `detection_logs`, token Bearer, `ATTACK_HISTORY_API_URL`, dan `FAIL2BAN_ATTACKS_API_URL`. |
-| Ban Fail2Ban tidak muncul di Attack History | Endpoint `/api/attacks` di `.71`, `FAIL2BAN_ATTACKS_API_URL`, token, dan isi `/var/log/fail2ban.log`. |
+| Ban Fail2Ban tidak muncul di Attack History | Endpoint `/api/attacks` di `.10`, `FAIL2BAN_ATTACKS_API_URL`, token, dan isi `/var/log/fail2ban.log`. |
 | Baris "Sumber" Attack History menyebut "N sumber gagal" | Salah satu endpoint tidak terjangkau; detail ada di `attacks.warnings` pada respons `/api/overview`. |
 | Network Flow kosong | `capture/processed/*.csv` belum terisi atau `RF_API_FEATURES_DIR` salah. |
-| LightGBM API tidak terjangkau | `curl.exe http://192.168.100.69:8080/health`; cek `ids-lightgbm-api` aktif di VM dan `VM_HOST` di `.env` cocok dengan IP DHCP. |
+| LightGBM API tidak terjangkau | `curl.exe http://192.168.1.6:8080/health`; cek `ids-lightgbm-api` aktif di VM dan `VM_HOST` di `.env` cocok dengan IP DHCP. |
 | Traffic VM lightgbm kosong | `LIGHTGBM_API_FEATURES_DIR` di VM dan `FLOW_FEATURES_LIGHTGBM_URL`/`FLOW_FEATURES_LIGHTGBM_TOKEN` di `.env` laptop. |
 | Resource VM lightgbm kosong | `glances-web` aktif di VM dan `GLANCES_LIGHTGBM_URL` benar; Glances harus versi 4 (`/api/4/quicklook`). |
-| iperf3 gagal | `IPERF3_BINARY` harus path lengkap; port `5201` harus terbuka dari laptop. |
+| iperf3 gagal | `IPERF3_BINARY` harus path lengkap; port `5202` (UDP) atau `5201` (TCP) harus terbuka dari laptop. |
 | Delay tidak ada | Target memblokir ICMP atau `PING_TARGET_HOST` salah. |
 | Telegram gagal | `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `TELEGRAM_BLOCK_NOTIFY_ENABLED`, dan akses internet. |
-| Notifikasi blokir tidak masuk | Dashboard harus sedang polling `/api/overview`; snapshot pertama hanya baseline, dan unblock menunggu IP hilang dari semua sumber. |
+| Notifikasi blokir tidak masuk | Dashboard harus sedang polling `/api/overview`; snapshot pertama hanya baseline, dan ringkasan akhir menunggu IP hilang dari semua sumber selama `TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS`. |
 | Data berhenti lalu pulih | IP VM berubah karena DHCP; ganti `VM_HOST`/`RF_VM_HOST` atau jalankan `set_vm_host.ps1`, lalu restart dashboard. |
 
 ## Library yang Dipakai
@@ -204,8 +204,9 @@ Library standar yang dipakai langsung: `sqlite3` untuk akun, `subprocess`/`threa
 | Telegram Alerts | Riwayat alert, notifikasi blokir/unblock, dan tombol test | Telegram API / memori proses |
 | QoS Monitoring | Delay, jitter, packet loss, throughput | iperf3 dan ICMP ping |
 | System Resource | CPU dan memori per host | Glances quicklook |
-| Blocked IP | Daftar IP yang diblokir + hitung mundur auto-unblock | LightGBM `.69` + Random Forest `.70` + Fail2Ban `.71` `/api/blocked` |
-| Attack History | Riwayat deteksi SSH brute force dan status blokir | RF API `/api/attacks` + LightGBM `.69` `/api/attacks` + Fail2Ban `.71` `/api/attacks` |
+| Blocked IP | Daftar IP yang diblokir + hitung mundur auto-unblock | LightGBM `.6` + Random Forest `.7` + Fail2Ban `.10` `/api/blocked` |
+| Attack History | Riwayat deteksi SSH brute force dan status blokir | RF API `/api/attacks` + LightGBM `.6` `/api/attacks` + Fail2Ban `.10` `/api/attacks` |
+| Detection Log | Semua hasil deteksi (bukan hanya serangan), filter model, pagination 30 baris | RF API `/api/detections` + LightGBM `.6` `/api/detections` |
 
 ### Struktur direktori
 
@@ -265,21 +266,23 @@ Dashboard/
 ### Topologi
 
 ```text
-VM 192.168.100.69 (lightgbm, Wi-Fi/LAN yang sama)
+VM 192.168.1.6 (lightgbm, rute Tailscale)
 ├─ capture/processed/*.csv ──► lightgbm_api.py :8080
 │                                  ├─ GET /api/attacks  (model LightGBM)
+│                                  ├─ GET /api/detections (semua prediction)
 │                                  └─ GET /api/features (17 fitur CSV)
 ├─ Glances :61208 (glances-web.service)
-└─ iperf3 server :5201 (ids-iperf3-local.service)
+└─ iperf3 server :5201 TCP / :5202 UDP (ids-iperf3-local*)
 
-VM 192.168.100.70 (random forest, Wi-Fi/LAN yang sama)
+VM 192.168.1.7 (random forest, rute Tailscale)
 ├─ capture/processed/*.csv ──► rf_api.py :8080
 │                                  ├─ GET /api/attacks  (model RandomForestClassifier)
+│                                  ├─ GET /api/detections (semua prediction)
 │                                  └─ GET /api/features (17 fitur CSV)
 ├─ Glances :61208 (glances-web.service)
-└─ iperf3 server :5201 (ids-iperf3.service)
+└─ iperf3 server :5201 TCP / :5202 UDP (ids-iperf3-local*)
 
-VM 192.168.100.71 (fail2ban, Wi-Fi/LAN yang sama)
+VM 192.168.1.10 (fail2ban, Wi-Fi/LAN yang sama)
 ├─ fail2ban-api :8080 (ids-fail2ban-api.service)
 │    ├─ GET /api/blocked  (Bearer FAIL2BAN_API_TOKEN)
 │    ├─ GET /api/attacks  (Ban/Unban dari fail2ban.log)
@@ -290,19 +293,19 @@ VM 192.168.100.71 (fail2ban, Wi-Fi/LAN yang sama)
 Laptop monitoring (IP tidak dikonfigurasi)
 ├─ Flask dashboard :5000
 ├─ Akses langsung VM lightgbm
-│  ├─ 192.168.100.69:8080 ──► LightGBM API (17 fitur)
-│  └─ 192.168.100.69:61208 ──► Glances quicklook
+│  ├─ 192.168.1.6:8080 ──► LightGBM API (17 fitur)
+│  └─ 192.168.1.6:61208 ──► Glances quicklook
 ├─ Akses langsung VM random forest
-│  ├─ 192.168.100.70:8080 ──► RF API
-│  └─ 192.168.100.70:61208 ──► Glances quicklook
+│  ├─ 192.168.1.7:8080 ──► RF API
+│  └─ 192.168.1.7:61208 ──► Glances quicklook
 ├─ Akses langsung VM fail2ban
-│  ├─ 192.168.100.71:8080 ──► Fail2Ban blocked + QoS API
-│  └─ 192.168.100.71:61208 ──► Glances quicklook
-├─ iperf3 client ──► 192.168.100.69/.70:5201
-└─ ping ──► 192.168.100.69/.70
+│  ├─ 192.168.1.10:8080 ──► Fail2Ban blocked + QoS API
+│  └─ 192.168.1.10:61208 ──► Glances quicklook
+├─ iperf3 client ──► 192.168.1.6/.7/.10:5202 (UDP)
+└─ ping ──► 192.168.1.6/.7/.10
 ```
 
-`192.168.56.102`/`.103` adalah target internal host-only yang terlihat pada data serangan dan dipakai probe QoS in-VM; `.104` adalah IP host-only VM Fail2Ban. Alamat host-only tidak dipakai laptop untuk mengakses dashboard. IP VM `192.168.100.69`/`.70`/`.71` didapat dari DHCP bridge; kalau berubah, cukup ganti `VM_HOST`/`RF_VM_HOST`/`FAIL2BAN_VM_HOST` di `.env`.
+`192.168.56.102`/`.103` adalah target internal host-only yang terlihat pada data serangan; `.104` adalah IP host-only VM Fail2Ban. Alamat host-only tidak dipakai laptop untuk mengakses dashboard. IP VM `192.168.1.6`/`.7`/`.10` didapat dari DHCP bridge; kalau berubah, cukup ganti `VM_HOST`/`RF_VM_HOST`/`FAIL2BAN_VM_HOST` di `.env`.
 
 ### Alur request
 
@@ -319,11 +322,12 @@ Laptop monitoring (IP tidak dikonfigurasi)
 ### Sumber live per panel
 
 - **Network Flow**: `GET /api/features?limit=200` dengan Bearer token. Endpoint dan token bisa berbeda per VM (`FLOW_FEATURES_*_URL` dan `FLOW_FEATURES_*_TOKEN`); kalau kosong, memakai `FLOW_FEATURES_API_URL` lalu `ATTACK_HISTORY_API_URL`, dan token memakai `FLOW_FEATURES_API_TOKEN` lalu `ATTACK_HISTORY_API_TOKEN`. Dashboard membentuk `series` per fitur, menghitung `current`, `previous`, dan `delta`. Event per VM disimpan di buffer in-memory (maks 4000, di-downsample saat penuh) lalu difilter sesuai rentang 5m/30m/1h; dropdown memilih satu fitur. Jika tidak ada event dalam rentang, chart menampilkan aktivitas terakhir (maks 50 event dalam jendela yang sama) dan sumber ditandai `event terakhir di luar rentang`. Jumlah fitur mengikuti sumber data (14 untuk VM random forest, 17 untuk VM lightgbm).
-- **QoS**: histori probe in-VM dibaca dari `/api/qos` dan difilter sesuai rentang 5m/30m/1h. Runner iperf3 dan ping menyimpan sampel di memori. Tombol tes memulai thread background; hasil muncul pada polling berikutnya.
+- **QoS**: mode in-VM (`QOS_SOURCE_MODE=vm`) membaca `/api/qos` dari timer `qos-probe*.timer` tiap 10 dtk. Packet loss dari ICMP ping; throughput dari iperf3 TCP `5201`; jitter/loss UDP dari `5202` (VM fail2ban memakai `5203` untuk TCP+UDP agar tidak bentrok). Histori 480 titik dibaca langsung, dan probe terbaru tetap ditampilkan walau sudah di luar rentang grafik (sumber ditandai `sampel terakhir di luar rentang`).
 - **System Resource**: `GET /api/4/quicklook` per host Glances; fallback ke `/api/3/quicklook`.
 - **Blocked IP**: gabungan `LIGHTGBM_BLOCKED_API_URL` (Bearer `LIGHTGBM_API_TOKEN`, fallback `FLOW_FEATURES_LIGHTGBM_TOKEN`), `RANDOM_FOREST_BLOCKED_API_URL` (Bearer `RANDOM_FOREST_API_TOKEN`, fallback `FLOW_FEATURES_RANDOM_FOREST_TOKEN` lalu `ATTACK_HISTORY_API_TOKEN`), dan `FAIL2BAN_API_URL` (Bearer `FAIL2BAN_API_TOKEN`). Hanya status blocked/banned/active yang ditampilkan, IP duplikat digabung dengan label sumbernya (mis. `LightGBM + Random Forest + Fail2Ban`), dan `unblock_at`/`remaining_seconds` dipakai untuk hitung mundur. Blokir tanpa jadwal tampil `Manual`; bila satu sumber gagal, sumber lain tetap tampil dengan peringatan. Respons juga memuat `total` dan `truncated`; daftar yang ditampilkan dibatasi 50 IP.
 - **Attack History**: `GET /api/attacks`; hasil RF difilter model `RandomForestClassifier`/`RandomForest` dan prediction `SSH-Bruteforce`, lalu diurutkan terbaru. Sumber LightGBM digabung lewat `ATTACK_HISTORY_EXTRA_API_URLS`, dan Fail2Ban lewat `FAIL2BAN_ATTACKS_API_URL` (API `:8080/api/attacks`, Bearer `FAIL2BAN_API_TOKEN`); item dari semua sumber digabung dan diurutkan ulang berdasarkan waktu. Setiap sumber yang berhasil dijamin mendapat minimal satu slot dari 50 item, sehingga ban Fail2Ban tidak tertutup deteksi RF yang lebih rapat. Ban Fail2Ban tampil sebagai baris terpisah dengan `model: Fail2Ban`, sedangkan kolom Blocking memakai `blocking_status` dari sumbernya (membedakan `false` dari data tidak tersedia). Jika satu sumber gagal, panel tetap `ok` dari sumber lain dan baris "Sumber" menambah catatan `N sumber gagal`.
-- **Telegram**: riwayat in-memory; test alert mengirim ke Telegram Bot API dari backend. Notifikasi blokir/unblock bersifat request-driven: hanya berjalan saat `/api/overview` dipolling, snapshot valid pertama menjadi baseline senyap, IP baru dikirim sebagai blokir (dengan label model), dan unblock dikirim setelah IP hilang dari semua sumber. Snapshot `warnings`/`truncated` menahan unblock agar tidak false-positive; pengiriman memakai worker queue agar polling tidak tertahan.
+- **Detection Log**: gabungan `GET /api/detections?limit=200` dari LightGBM dan Random Forest, berisi semua `prediction` tanpa filter model/prediction. Dashboard mengambil maksimal 200 baris per VM, menggabungkan dan mengurutkan terbaru, lalu halaman menampilkan 30 baris per halaman dengan filter model ML di sisi klien. Sumber URL diturunkan dari `LIGHTGBM_BLOCKED_API_URL`/`RANDOM_FOREST_BLOCKED_API_URL` (`/api/blocked` → `/api/detections`) atau diatur lewat `DETECTION_LOG_API_URLS`.
+- **Telegram**: riwayat in-memory; test alert mengirim ke Telegram Bot API dari backend. Notifikasi bersifat request-driven: hanya berjalan saat `/api/overview` dipolling, snapshot valid pertama menjadi baseline senyap, dan setiap IP dianggap satu episode serangan. Blokir pertama dikirim sekali; blokir ulang dalam masa tunggu tidak dikirim; setelah IP hilang dari semua sumber selama `TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS`, satu pesan terakhir dikirim dengan total deteksi `SSH-Bruteforce` dari `/api/detections/count` di LightGBM + Random Forest. Snapshot `warnings`/`truncated` menahan final agar tidak false-positive; pengiriman memakai worker queue agar polling tidak tertahan.
 
 ### Status data
 
@@ -344,10 +348,10 @@ Kegagalan satu section tidak menghentikan section lain. `/api/overview` juga men
 
 Ketiganya memerlukan session login dan CSRF token. Aksi iperf3/delay mengembalikan `202` dan `estimated_seconds`; UI memantau hasil lewat polling.
 
-> Tombol "Jalankan tes iperf3" dan "Ukur delay" **tidak lagi ada di UI**: pengukuran
-> QoS berjalan otomatis dari probe in-VM (lihat bagian *Pengukuran QoS di dalam
-> VM*). Kedua endpoint tetap hidup dan bisa dipanggil langsung lewat API
-> (menerima `?vm=<id>` untuk mengukur VM tertentu).
+> Tombol "Jalankan tes iperf3" dan "Ukur delay" **tidak lagi ada di UI**:
+> pengukuran QoS berjalan otomatis dari laptop (lihat bagian *Pengukuran QoS
+> dari laptop*). Kedua endpoint tetap hidup dan bisa dipanggil langsung lewat
+> API (menerima `?vm=<id>` untuk mengukur VM tertentu).
 
 ## API yang Dipakai
 
@@ -360,7 +364,9 @@ Ketiganya memerlukan session login dan CSRF token. Aksi iperf3/delay mengembalik
 | `GET/POST` | `/login` | CSRF saat POST | Login session |
 | `POST` | `/logout` | Session + CSRF | Logout |
 | `GET` | `/dashboard` | Session | Halaman dashboard |
+| `GET` | `/detections` | Session | Halaman Detection Log |
 | `GET` | `/api/overview` | Session | Snapshot seluruh panel |
+| `GET` | `/api/detections?limit=400` | Session/Bearer | Log deteksi gabungan untuk halaman Detection Log |
 | `POST` | `/api/telegram/test` | Session + CSRF | Kirim test alert |
 | `POST` | `/api/iperf3/run` | Session + CSRF | Mulai tes iperf3 |
 | `POST` | `/api/delay/run` | Session + CSRF | Mulai pengukuran delay |
@@ -413,12 +419,16 @@ API ini ada di `deploy/rf_api.py`, bind ke `127.0.0.1:8080`, dan hanya membaca d
 |---|---|---|---|
 | `GET` | `/health` | Tanpa token | Cek database |
 | `GET` | `/api/attacks?limit=50` | Bearer token | Riwayat deteksi RF + `blocking_status` |
+| `GET` | `/api/detections?limit=200` | Bearer token | Semua hasil deteksi + port/probabilitas |
+| `GET` | `/api/detections/count?src_ip=<ip>&since=<iso>` | Bearer token | Jumlah deteksi SSH-Bruteforce untuk satu IP |
 | `GET` | `/api/blocked?limit=50` | Bearer token | IP yang sedang diblokir + `unblock_at` |
 | `GET` | `/api/features?limit=50` | Bearer token | 17 fitur flow dari CSV |
 
 Ketentuan:
 
-- `limit` 1-200, default 50.
+- `limit` 1-200, default 50; `/api/detections` default 30.
+- `/api/detections` tidak memfilter `model`/`prediction` dan mengembalikan `id`, `detected_at`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `protocol`, `prediction`, `attack_probability`, `confidence`, `model`, dan `status`.
+- `/api/detections/count` menghitung baris dengan `prediction=SSH-Bruteforce`; `since` opsional (ISO-8601) dan `src_ip` wajib.
 - `/api/attacks` menerima model `RandomForestClassifier` dan alias runtime `RandomForest`, memfilter `prediction=SSH-Bruteforce`, lalu mengisi `blocking_status` dari `blocked_ips` (`true`/`false`/`null`).
 - `/api/blocked` hanya mengirim baris berstatus `BLOCKED`; API tetap read-only dan tidak melakukan enforcement.
 - `/api/features` membaca `capture/processed/*.csv`; direktori diatur `RF_API_FEATURES_DIR`.
@@ -457,12 +467,16 @@ API terpisah di `deploy/lightgbm_api.py` untuk VM yang menjalankan model LightGB
 |---|---|---|---|
 | `GET` | `/health` | Tanpa token | Cek database |
 | `GET` | `/api/attacks?limit=50` | Bearer token | Riwayat deteksi LightGBM + `blocking_status` |
+| `GET` | `/api/detections?limit=200` | Bearer token | Semua hasil deteksi + port/probabilitas |
+| `GET` | `/api/detections/count?src_ip=<ip>&since=<iso>` | Bearer token | Jumlah deteksi SSH-Bruteforce untuk satu IP |
 | `GET` | `/api/blocked?limit=50` | Bearer token | IP yang sedang diblokir + `unblock_at` |
 | `GET` | `/api/features?limit=50` | Bearer token | 17 fitur flow dari CSV |
 
 Ketentuan:
 
-- `limit` 1-200, default 50.
+- `limit` 1-200, default 50; `/api/detections` default 30.
+- `/api/detections` tidak memfilter `model`/`prediction` dan mengembalikan `id`, `detected_at`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `protocol`, `prediction`, `attack_probability`, `confidence`, `model`, dan `status`.
+- `/api/detections/count` menghitung baris dengan `prediction=SSH-Bruteforce`; `since` opsional (ISO-8601) dan `src_ip` wajib.
 - `/api/attacks` memfilter `model=LightGBM` dan `prediction=SSH-Bruteforce`.
 - `/api/attacks` mengisi `blocking_status` dari status terakhir IP di `blocked_ips`: `true` bila masih `BLOCKED`, `false` bila sudah `UNBLOCKED`, dan `null` bila IP belum pernah tercatat.
 - `/api/blocked` mengembalikan `ip`, `blocked_at`, `last_seen_at`, `unblock_at`, `remaining_seconds`, `jail`, `reason`, `model`, `status`, dan `source`. Hanya baris berstatus `BLOCKED` yang dikirim.
@@ -481,13 +495,13 @@ Init Bwd Win Byts, Fwd Seg Size Min
 Deploy di VM lightgbm:
 
 ```bash
-scp deploy/lightgbm_api.py server@192.168.100.69:/home/server/ids-backend/lightgbm_api.py
-scp deploy/ids-lightgbm-api.service server@192.168.100.69:/tmp/ids-lightgbm-api.service
+scp deploy/lightgbm_api.py server@192.168.1.6:/home/server/ids-backend/lightgbm_api.py
+scp deploy/ids-lightgbm-api.service server@192.168.1.6:/tmp/ids-lightgbm-api.service
 sudo cp /tmp/ids-lightgbm-api.service /etc/systemd/system/ids-lightgbm-api.service
 sudo install -m 600 /dev/null /home/server/ids-backend/.lightgbm-api.env
 sudo nano /home/server/ids-backend/.lightgbm-api.env   # isi LIGHTGBM_API_* dari deploy/lightgbm-api.env.example
 sudo systemctl daemon-reload && sudo systemctl enable --now ids-lightgbm-api
-curl.exe http://192.168.100.69:8080/health
+curl.exe http://192.168.1.6:8080/health
 ```
 
 Auto-unblock LightGBM dikonfigurasi di VM:
@@ -508,22 +522,22 @@ Glances di VM yang sama (butuh API versi 4):
 ```bash
 python3 -m venv /home/server/glances-venv
 /home/server/glances-venv/bin/pip install "glances>=4,<5" fastapi uvicorn
-scp deploy/glances-web.service server@192.168.100.69:/tmp/glances-web.service
+scp deploy/glances-web.service server@192.168.1.6:/tmp/glances-web.service
 sudo cp /tmp/glances-web.service /etc/systemd/system/glances-web.service
 sudo systemctl daemon-reload && sudo systemctl enable --now glances-web
-curl.exe http://192.168.100.69:61208/api/4/quicklook
+curl.exe http://192.168.1.6:61208/api/4/quicklook
 ```
 
 ### API Fail2Ban read-only di VM fail2ban
 
-VM `192.168.100.71` menjalankan `fail2ban-api` (`:8080`) dan Glances (`:61208`). API berjalan sebagai root karena socket `fail2ban-client` hanya dapat diakses root; service memakai hardening read-only.
+VM `192.168.1.10` menjalankan `fail2ban-api` (`:8080`) dan Glances (`:61208`). API berjalan sebagai root karena socket `fail2ban-client` hanya dapat diakses root; service memakai hardening read-only.
 
 ```bash
-scp deploy/fail2ban_api.py server@192.168.100.71:/home/server/fail2ban/fail2ban_api.py
-scp deploy/ids-fail2ban-api.service server@192.168.100.71:/tmp/ids-fail2ban-api.service
-scp deploy/qos_probe.py server@192.168.100.71:/home/server/fail2ban/qos/qos_probe.py
-scp deploy/qos-probe-fail2ban.service deploy/qos-probe-fail2ban.timer server@192.168.100.71:/tmp/
-scp deploy/glances-web.service server@192.168.100.71:/tmp/glances-web.service
+scp deploy/fail2ban_api.py server@192.168.1.10:/home/server/fail2ban/fail2ban_api.py
+scp deploy/ids-fail2ban-api.service server@192.168.1.10:/tmp/ids-fail2ban-api.service
+scp deploy/qos_probe.py server@192.168.1.10:/home/server/fail2ban/qos/qos_probe.py
+scp deploy/qos-probe-fail2ban.service deploy/qos-probe-fail2ban.timer server@192.168.1.10:/tmp/
+scp deploy/glances-web.service server@192.168.1.10:/tmp/glances-web.service
 
 # Di VM: pasang unit + env token (nilai mengikuti deploy/fail2ban-api.env.example)
 sudo install -m 600 /dev/null /home/server/fail2ban/.fail2ban-api.env
@@ -533,6 +547,8 @@ sudo cp /tmp/qos-probe-fail2ban.service /tmp/qos-probe-fail2ban.timer /etc/syste
 sudo cp /tmp/glances-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now glances-web ids-fail2ban-api qos-probe-fail2ban.timer
+# Timer memakai iperf3 /usr/local/bin/iperf3 dan port 5203 (TCP+UDP) agar
+# tidak bentrok dengan probe VM random forest yang memakai 5201/5202.
 
 # Setelah memperbarui fail2ban_api.py pada instalasi yang sudah berjalan:
 sudo systemctl restart ids-fail2ban-api
@@ -541,33 +557,36 @@ sudo systemctl restart ids-fail2ban-api
 Verifikasi:
 
 ```powershell
-curl.exe http://192.168.100.71:8080/health
+curl.exe http://192.168.1.10:8080/health
 $token = "<token-dari-.env>"
-curl.exe -H "Authorization: Bearer $token" http://192.168.100.71:8080/api/blocked
-curl.exe -H "Authorization: Bearer $token" "http://192.168.100.71:8080/api/attacks?limit=50"
-curl.exe -H "Authorization: Bearer $token" http://192.168.100.71:8080/api/qos
-curl.exe http://192.168.100.71:61208/api/4/quicklook
+curl.exe -H "Authorization: Bearer $token" http://192.168.1.10:8080/api/blocked
+curl.exe -H "Authorization: Bearer $token" "http://192.168.1.10:8080/api/attacks?limit=50"
+curl.exe -H "Authorization: Bearer $token" http://192.168.1.10:8080/api/qos
+curl.exe http://192.168.1.10:61208/api/4/quicklook
 ```
 
 `/api/blocked` mengembalikan `{ "generated_at", "source": "Fail2Ban", "items": [...] }`. Item berisi `ip`, `jail`, `blocked_at`, dan `status`; daftar kosong berarti belum ada IP yang sedang diblokir. Dashboard menggabungkannya dengan `/api/blocked` LightGBM dan Random Forest.
 
 `/api/attacks?limit=50` membaca `/var/log/fail2ban.log` dan mengembalikan maksimal 50 event `Ban` terbaru sebagai riwayat serangan. `limit` 1-200, default 50; arsip rotasi mingguan belum dibaca. Setiap baris berisi `detected_at`, `source_ip`, `attack_type`, `detection`, `model: "Fail2Ban"`, `blocking_status`, dan `jail`; `blocking_status` bernilai `true` bila event terakhir IP tersebut adalah `Ban`, atau `false` bila sudah `Unban`. Jika log tidak terbaca, endpoint mengembalikan HTTP 503 `fail2ban_log_unavailable`. Dashboard memakai `FAIL2BAN_ATTACKS_API_URL` dengan Bearer `FAIL2BAN_API_TOKEN`.
 
-`/api/qos` mengembalikan `probe` terakhir dan `history` dari timer `qos-probe-fail2ban` (target `192.168.56.102`, iperf3 `/usr/bin/iperf3`).
+`/api/qos` mengembalikan `probe` terakhir dan `history` dari timer
+`qos-probe-fail2ban` (target `192.168.56.102`, iperf3 `/usr/local/bin/iperf3`,
+TCP `5203` + UDP `5203`). Timer ini **active/enabled** dan menjadi sumber utama
+QoS dashboard.
 
 ### Sumber eksternal lain
 
 | Sumber | Endpoint | Auth | Dipakai untuk |
 |---|---|---|---|
 | Glances | `GET /api/4/quicklook` (fallback `/api/3/quicklook`) | — | CPU/memori host |
-| LightGBM API | `192.168.100.69:8080/api/features` | Bearer token | 17 fitur flow VM lightgbm |
-| LightGBM API | `192.168.100.69:8080/api/attacks` | Bearer token | Deteksi LightGBM (opsional) |
-| LightGBM API | `192.168.100.69:8080/api/blocked` | Bearer `LIGHTGBM_API_TOKEN` | Blocked IP + jadwal auto-unblock |
-| Random Forest API | `192.168.100.70:8080/api/blocked` | Bearer `RANDOM_FOREST_API_TOKEN` | Blocked IP + jadwal auto-unblock |
-| Fail2Ban | `192.168.100.71:8080/api/blocked` | Bearer `FAIL2BAN_API_TOKEN` | Blocked IP |
-| Fail2Ban | `192.168.100.71:8080/api/attacks` | Bearer `FAIL2BAN_API_TOKEN` | Riwayat Ban/Unban |
-| Fail2Ban QoS | `192.168.100.71:8080/api/qos` | Bearer `FAIL2BAN_API_TOKEN` | Delay/jitter/loss/throughput VM Fail2Ban |
-| iperf3 | `192.168.100.70:5201` TCP/UDP | — | Throughput/jitter |
+| LightGBM API | `192.168.1.6:8080/api/features` | Bearer token | 17 fitur flow VM lightgbm |
+| LightGBM API | `192.168.1.6:8080/api/attacks` | Bearer token | Deteksi LightGBM (opsional) |
+| LightGBM API | `192.168.1.6:8080/api/blocked` | Bearer `LIGHTGBM_API_TOKEN` | Blocked IP + jadwal auto-unblock |
+| Random Forest API | `192.168.1.7:8080/api/blocked` | Bearer `RANDOM_FOREST_API_TOKEN` | Blocked IP + jadwal auto-unblock |
+| Fail2Ban | `192.168.1.10:8080/api/blocked` | Bearer `FAIL2BAN_API_TOKEN` | Blocked IP |
+| Fail2Ban | `192.168.1.10:8080/api/attacks` | Bearer `FAIL2BAN_API_TOKEN` | Riwayat Ban/Unban |
+| Fail2Ban QoS | `192.168.1.10:8080/api/qos` | Bearer `FAIL2BAN_API_TOKEN` | Delay/jitter/loss/throughput VM Fail2Ban |
+| iperf3 | `192.168.1.6` / `.7` / `.10:5202` UDP | — | Throughput + jitter (satu tes) |
 | ICMP | `PING_TARGET_HOST` | — | Delay dan packet loss |
 | Telegram | `POST https://api.telegram.org/bot<token>/sendMessage` | Bot token | Test alert + notifikasi blokir/unblock |
 | Fallback iperf3 | `IPERF3_RESULT_URL` | — | Snapshot hasil iperf3 |
@@ -584,8 +603,8 @@ DATA_MODE=live
 SECRET_KEY=<hasil-generate-acak>
 DATABASE_PATH=instance/dashboard.db
 
-VM_HOST=192.168.100.69
-RF_VM_HOST=192.168.100.70
+VM_HOST=192.168.1.6
+RF_VM_HOST=192.168.1.7
 
 GLANCES_RANDOM_FOREST_URL=http://${RF_VM_HOST}:61208
 GLANCES_RANDOM_FOREST_LABEL=randomforest-vm
@@ -597,9 +616,9 @@ FLOW_FEATURES_API_URL=http://${RF_VM_HOST}:8080/api/features
 IPERF3_ENABLED=true
 IPERF3_BINARY=C:\path\lengkap\iperf3.exe
 IPERF3_SERVER_HOST=${VM_HOST}
-IPERF3_PORT=5201
+IPERF3_PORT=5202
 IPERF3_TEST_PROTOCOL=udp
-IPERF3_BANDWIDTH=100M
+IPERF3_BANDWIDTH=2M
 
 PING_TARGET_HOST=${VM_HOST}
 
@@ -613,13 +632,15 @@ LIGHTGBM_BLOCKED_API_URL=http://${VM_HOST}:8080/api/blocked
 LIGHTGBM_API_TOKEN=<token-dari-.lightgbm-api.env>
 QOS_VM=lightgbm-vm
 QOS_SOURCE_MODE=vm
-QOS_AUTO_ENABLED=true
-QOS_AUTO_INTERVAL_SECONDS=5
+QOS_AUTO_ENABLED=false
+QOS_AUTO_INTERVAL_SECONDS=12
 QOS_AUTO_METRICS=ping,iperf3
+QOS_AUTO_IPERF3_PROTOCOL=udp
+QOS_AUTO_IPERF3_BANDWIDTH=1M
 QOS_LOCAL_PROBE=false
 
 # VM fail2ban (blocked IP + attack history + QoS, tanpa Network Flow)
-FAIL2BAN_VM_HOST=192.168.100.71
+FAIL2BAN_VM_HOST=192.168.1.10
 FAIL2BAN_API_URL=http://${FAIL2BAN_VM_HOST}:8080/api/blocked
 FAIL2BAN_ATTACKS_API_URL=http://${FAIL2BAN_VM_HOST}:8080/api/attacks
 FAIL2BAN_API_TOKEN=<token-dari-.fail2ban-api.env>
@@ -644,9 +665,9 @@ Catatan:
 Semua URL yang menunjuk VM memakai `${VM_HOST}`, `${RF_VM_HOST}`, atau `${FAIL2BAN_VM_HOST}`, jadi IP hanya ditulis sekali di `.env` (baris IP harus berada **di atas** pemakaiannya karena `python-dotenv` menyelesaikan variabel sesuai urutan file):
 
 ```dotenv
-VM_HOST=192.168.100.69            # VM lightgbm
-RF_VM_HOST=192.168.100.70         # VM random forest
-FAIL2BAN_VM_HOST=192.168.100.71   # VM fail2ban
+VM_HOST=192.168.1.6            # VM lightgbm
+RF_VM_HOST=192.168.1.7         # VM random forest
+FAIL2BAN_VM_HOST=192.168.1.10   # VM fail2ban
 
 # VM lightgbm
 FLOW_FEATURES_LIGHTGBM_URL=http://${VM_HOST}:8080/api/features
@@ -672,19 +693,19 @@ QOS_VMS=lightgbm-vm,randomforest-vm,fail2ban-vm
 Saat IP VM berubah, ganti satu baris atau pakai helper:
 
 ```powershell
-.\scripts\set_vm_host.ps1 192.168.100.69                         # VM lightgbm
-.\scripts\set_vm_host.ps1 -Variable RF_VM_HOST 192.168.100.70    # VM random forest
-.\scripts\set_vm_host.ps1 -Variable FAIL2BAN_VM_HOST 192.168.100.71 # VM fail2ban
+.\scripts\set_vm_host.ps1 192.168.1.6                         # VM lightgbm
+.\scripts\set_vm_host.ps1 -Variable RF_VM_HOST 192.168.1.7    # VM random forest
+.\scripts\set_vm_host.ps1 -Variable FAIL2BAN_VM_HOST 192.168.1.10 # VM fail2ban
 ```
 
-Script itu menulis ulang satu baris variabel yang dipilih, lalu memeriksa ping, port `8080`/`61208`/`5201`, `/health`, dan `quicklook`. Tidak ada rule firewall yang perlu diubah karena `ufw` di ketiga VM nonaktif. Setelah itu restart dashboard agar `.env` dibaca ulang.
+Script itu menulis ulang satu baris variabel yang dipilih, lalu memeriksa ping, port `8080`/`61208`/`5201`/`5202`, `/health`, dan `quicklook`. Tidak ada rule firewall yang perlu diubah karena `ufw` di ketiga VM nonaktif. Setelah itu restart dashboard agar `.env` dibaca ulang.
 
 ### Aturan yang sama untuk ketiga VM
 
-| # | Aturan | lightgbm (192.168.100.69) | random forest (192.168.100.70) | fail2ban (192.168.100.71) |
+| # | Aturan | lightgbm (192.168.1.6) | random forest (192.168.1.7) | fail2ban (192.168.1.10) |
 |---|---|---|---|---|
 | 1 | Satu variabel IP per VM di `.env`, dipakai `${VAR}` di semua URL | `VM_HOST` | `RF_VM_HOST` | `FAIL2BAN_VM_HOST` |
-| 2 | Semua service listen di `0.0.0.0` → IP/subnet berubah tanpa edit di VM | `ids-lightgbm-api`, `glances-web`, `ids-iperf3-local` | `ids-rf-api`, `glances-web`, `ids-iperf3` | `ids-fail2ban-api`, `glances-web`, `qos-probe-fail2ban.timer` |
+| 2 | Semua service listen di `0.0.0.0` → IP/subnet berubah tanpa edit di VM | `ids-lightgbm-api`, `glances-web`, `ids-iperf3-local*` | `ids-rf-api`, `glances-web`, `ids-iperf3*` | `ids-fail2ban-api`, `glances-web`, `ids-iperf3-local*` |
 | 3 | `ufw` nonaktif (allow all); tidak ada rule yang perlu diubah saat IP/subnet berpindah | — | **identik** | **identik** |
 | 4 | Token per VM | `FLOW_FEATURES_LIGHTGBM_TOKEN`, `ATTACK_HISTORY_EXTRA_API_TOKENS` | `ATTACK_HISTORY_API_TOKEN` (sama dengan nilai di `.rf-api.env` VM) | `FAIL2BAN_API_TOKEN` |
 | 5 | Helper `set_vm_host.ps1` (+ `-Variable`) | ✓ | ✓ | ✓ |
@@ -712,13 +733,12 @@ Sisi VM tidak perlu diubah saat IP berpindah karena semua service listen di `0.0
 | LightGBM API | `ids-lightgbm-api` (system) | `0.0.0.0:8080` | `LIGHTGBM_API_BIND=0.0.0.0` di `.lightgbm-api.env` |
 | RF API | `ids-rf-api` (user) | `0.0.0.0:8080` | `RF_API_BIND=0.0.0.0` di `.rf-api.env`; `rf_api.py` 17 fitur |
 | Glances | `glances-web` (system) | `0.0.0.0:61208` | unit `deploy/glances-web.service` (Glances 4.5.8, API v4) |
-| iperf3 | `ids-iperf3-local` (system) | `*:5201` | unit `deploy/ids-iperf3-local.service` (iperf3 3.22) |
-| iperf3 TCP | `ids-iperf3-local` (system) | `*:5201` | iperf3 3.22, `--idle-timeout 60` |
-| iperf3 UDP | `ids-iperf3-local-udp` (system) | `*:5202` | profil jitter, port terpisah (loss UDP cadangan) |
-| iperf3 UDP (arah 2) | `ids-iperf3-local-udp2` (system) | `*:5203` | port UDP untuk arah probe sebaliknya |
+| iperf3 TCP | `ids-iperf3-local` (system) | `*:5201` | iperf3 3.22, untuk tes manual/jalur bebas loss |
+| iperf3 UDP | `ids-iperf3-local-udp` (system) | `*:5202` | iperf3 3.22, probe in-VM dan tes manual |
+| iperf3 UDP (arah 2) | `ids-iperf3-local-udp2` (system) | `*:5203` | probe in-VM arah kedua / VM fail2ban |
 | Fail2Ban API | `ids-fail2ban-api` (system) | `0.0.0.0:8080` | `/api/blocked` + `/api/attacks` + `/api/qos`, Bearer `FAIL2BAN_API_TOKEN` |
-| Probe QoS Fail2Ban | `qos-probe-fail2ban.timer` + `qos-probe-fail2ban.service` (system) | — | probe in-VM tiap 10 dtk → `/home/server/fail2ban/qos/*.json` |
-| Probe QoS ML | `qos-probe.timer` + `qos-probe.service` (system) | — | probe in-VM tiap 10 dtk → `qos/*.json` |
+| Probe QoS Fail2Ban | `qos-probe-fail2ban.timer` + `qos-probe-fail2ban.service` (system) | — | **enabled**; sumber utama `/home/server/fail2ban/qos/*.json` |
+| Probe QoS ML | `qos-probe.timer` + `qos-probe.service` (system) | — | **enabled**; sumber utama `qos/*.json` |
 
 ### Firewall VM
 
@@ -726,77 +746,35 @@ Sisi VM tidak perlu diubah saat IP berpindah karena semua service listen di `0.0
 
 Konfigurasi ini hanya untuk jaringan lab. Jangan mengekspos VM ke internet.
 
-Port `5201/udp` wajib ada untuk data iperf3; tanpa itu client menunggu laporan server sampai timeout.
+Port `5202/udp` wajib ada untuk data iperf3 otomatis; tanpa itu client menunggu laporan server sampai timeout. Port `5201` tetap dipakai untuk tes manual TCP.
 
-### Pengukuran QoS di dalam VM (menggambarkan beban saat serangan)
+### Pengukuran QoS in-VM (host-only)
 
-Panel QoS **tidak** mengukur jalur laptop→VM, melainkan **diukur di dalam VM**
-lewat `deploy/qos_probe.py` (dijalankan `qos-probe.timer` untuk VM ML dan
-`qos-probe-fail2ban.timer` untuk VM Fail2Ban, tiap 10 detik). Probe mengukur ke
-VM peer lewat **interface host-only VirtualBox** (`192.168.56.0/24`) — link yang
-sama dipakai trafik SSH brute force dan dibaca pipeline ML. Jadi
-delay/jitter/packet-loss/throughput di panel menggambarkan beban pada jalur yang
-diproses deteksi ML (probe Fail2Ban memakai link host-only yang sama sebagai
-pembanding), bukan beban jaringan laptop.
+Panel QoS mengukur **link host-only antar VM** (`192.168.56.0/24`) lewat timer
+`qos-probe.timer` dan `qos-probe-fail2ban.timer` yang **active/enabled**. Setiap
+siklus berjalan tiap 10 detik dan hasilnya ditulis ke `qos/last.json` +
+`qos/history.json`, lalu dibaca dashboard dari `/api/qos`. Scheduler laptop
+dimatikan (`QOS_LOCAL_PROBE=false`, `QOS_AUTO_ENABLED=false`); runner laptop
+tetap tersedia untuk tes manual.
 
-Probe menulis dua file di `qos/` (di luar `capture/`, jadi tidak pernah disentuh
-worker ML):
+| VM sumber | Target host-only | TCP | UDP |
+|---|---|---|---|
+| `lightgbm-vm` `.120` | `.187` | `5201` | `5203` |
+| `randomforest-vm` `.187` | `.120` | `5201` | `5202` |
+| `fail2ban-vm` `.133` | `.120` | `5203` | `5203` |
 
-| File | Isi |
-|---|---|
-| `qos/last.json` | Hasil probe terakhir |
-| `qos/history.json` | Riwayat probe (480 titik = 80 menit @10 detik), ditulis atomik |
+`delay_ms` dan packet loss berasal dari ICMP ping 10 paket @0.2 dtk;
+`throughput_mbps` dari iperf3 TCP; `jitter_ms` dan loss UDP dari iperf3 UDP.
+VM fail2ban memakai `/usr/local/bin/iperf3` dan UDP `5203` agar tidak bentrok
+dengan probe `.187` yang memakai UDP `5202`. Histori 480 titik setara 80 menit
+pada interval 10 detik. Bila seluruh titik berada di luar rentang grafik, API
+tetap menyertakan probe terbaru dan menandai sumber `sampel terakhir di luar
+rentang` supaya nilai serta waktunya tidak hilang.
 
-Dashboard membentuk seri grafik dari `history.json` sesuai rentang yang dipilih
-(5 menit, 30 menit, atau 1 jam), sehingga grafik QoS bisa menampilkan seluruh
-durasi pengujian.
-
-Isi satu titik probe:
-
-| Metrik | Cara ukur | Port |
-|---|---|---|
-| `delay_ms` | ICMP ping ke peer | — |
-| `packet_loss_percent` | ICMP ping ke peer (10 paket, interval 0.2 dtk) | — |
-| `jitter_ms` | iperf3 UDP 1 Mbps | `5202` / `5203` (per arah) |
-| `throughput_mbps` | iperf3 TCP | `5201` |
-
-Packet loss memakai ping sebagai sumber utama; loss UDP hanya fallback bila
-ICMP tidak tersedia. Nilai ping juga disimpan sebagai
-`ping_packet_loss_percent`, sedangkan loss UDP tetap ada di
-`udp_packet_loss_percent` pada `last.json`.
-
-Endpoint baca-saja `GET /api/qos` di kedua API VM juga mengembalikan
-`load` (loadavg), `network` (counter `enp0s8`: rx/tx/error/drop) dan
-`capture_backlog` (jumlah & umur PCAP yang menunggu diproses) — untuk melihat
-apakah pipeline ML tertinggal saat server kewalahan.
-
-Proteksi agar pipeline ML tidak terganggu:
-
-1. Probe memakai port `5201`/`5202`, sedangkan `ids-tcpdump` hanya menangkap
-   `tcp port 22` → trafik probe **tidak pernah** masuk `capture/raw`.
-2. Folder hasil probe `qos/` berada **di luar** `capture/`.
-3. Probe ringan (1 Mbps, 2–3 detik, tiap 10 detik) dan diberi `Nice=10` +
-   `CPUWeight=10` sehingga tidak merebut sumber daya dari worker ML.
-4. Server iperf3 TCP (`5201`) dan UDP (`5202`/`5203`) dipisah, memakai
-   `--idle-timeout 60` agar sesi yang nyangkut tidak memblokir server.
-   Probe **saling mengukur** dengan port UDP berbeda per arah: probe VM
-   lightgbm memakai `5203` di VM random forest, probe VM random forest memakai
-   `5202` di VM lightgbm — sehingga tidak pernah mengukur ke server yang
-   sedang dipakai probe dari arah sebaliknya.
-5. Probe dari laptop dimatikan saat `QOS_SOURCE_MODE=vm`
-   (`QOS_LOCAL_PROBE=false`) supaya tidak berebut port iperf3 dengan probe
-   in-VM.
-
-Arah pengukuran (saling mengukur lewat host-only):
-
-```text
-VM random forest 192.168.56.103  ──probe──►  VM lightgbm 192.168.56.102
-VM lightgbm     192.168.56.102  ──probe──►  VM random forest 192.168.56.103
-VM fail2ban     192.168.56.104  ──probe──►  VM lightgbm 192.168.56.102
-```
-
-Dampak serangan pada pipeline ML terukur di `capture_backlog.oldest_age_seconds`
-(umur PCAP tertua) dan `network.enp0s8` (`tx_errors`/`rx_dropped`).
+Dampak serangan pada pipeline ML tetap bisa dilihat dari
+`capture_backlog.oldest_age_seconds` (umur PCAP tertua) dan `network.enp0s8`
+(`tx_errors`/`rx_dropped`) pada endpoint `/api/qos` VM, terlepas dari mode QoS
+yang dipakai.
 
 ### Jalur capture IDS
 
@@ -814,64 +792,54 @@ sudo cp /tmp/ids-iperf3-local.service /etc/systemd/system/ids-iperf3-local.servi
 sudo systemctl daemon-reload && sudo systemctl enable --now ids-iperf3-local
 ```
 
-### QoS otomatis (per VM)
+### Probe QoS in-VM (per VM)
 
-`QOS_AUTO_ENABLED=true` membuat `services/qos_scheduler.py` menjalankan pengukuran sendiri tiap `QOS_AUTO_INTERVAL_SECONDS` tanpa perlu menekan tombol, tetapi hanya jika `QOS_LOCAL_PROBE=true`. Pada konfigurasi saat ini `QOS_LOCAL_PROBE=false`, jadi angka QoS berasal dari probe in-VM. Scheduler hanya berjalan di mode `live` dan tidak aktif saat `TESTING`.
+QoS diukur **per VM**: `QOS_VMS` mendaftarkan VM yang diukur, dan target
+ping/iperf3 tiap VM diambil dari `VM_HOST` (lightgbm), `RF_VM_HOST` (random
+forest), dan `FAIL2BAN_VM_HOST` (fail2ban) — jadi hanya ada satu tempat per IP.
+Timer di tiap VM mengambil sampel tiap 10 detik dan menulis `last.json` +
+`history.json`; dashboard membacanya lewat `/api/qos`.
 
-QoS diukur **per VM**: `QOS_VMS` mendaftarkan VM yang diukur, dan target ping/iperf3 tiap VM diambil dari `VM_HOST` (lightgbm), `RF_VM_HOST` (random forest), dan `FAIL2BAN_VM_HOST` (fail2ban) — jadi hanya ada satu tempat per IP. Untuk ketiga VM, panel membaca histori dari `/api/qos` in-VM; scheduler laptop hanya aktif bila `QOS_LOCAL_PROBE=true`. Panel QoS memakai runner milik VM yang sedang dipilih, dan tombol manual mengukur VM terpilih.
+| VM | Unit timer | Target | TCP | UDP |
+|---|---|---|---|---|
+| `lightgbm-vm` | `qos-probe.timer` | `.187` | `5201` | `5203` |
+| `randomforest-vm` | `qos-probe.timer` | `.120` | `5201` | `5202` |
+| `fail2ban-vm` | `qos-probe-fail2ban.timer` | `.120` | `5203` | `5203` |
 
-Dua profil iperf3 berjalan supaya keempat metrik tetap terpantau:
-
-| Profil | Protokol | Port | Cadangan | Interval | Menghasilkan |
-|---|---|---|---|---|---|
-| Throughput | `tcp` (`QOS_AUTO_IPERF3_PROTOCOL`) | `5201` | `QOS_AUTO_IPERF3_BANDWIDTH` | tiap `QOS_AUTO_INTERVAL_SECONDS` + cooldown | Throughput |
-| Jitter | `udp` | `5202` (`QOS_AUTO_LOSS_PORT`) | `QOS_AUTO_LOSS_BANDWIDTH` | tiap `QOS_AUTO_LOSS_INTERVAL_SECONDS` | Jitter (loss UDP cadangan) |
-
-Di mode `QOS_SOURCE_MODE=vm`, **packet loss** diambil dari probe ICMP ping
-in-VM setiap 10 detik, bukan dari profil UDP di atas; profil UDP tetap dipakai
-untuk jitter.
-
-Kedua profil memakai **server iperf3 terpisah** (`ids-iperf3-local` di `:5201` dan `ids-iperf3-local-udp` di `:5202`) dengan `--idle-timeout 60`. Pemisahan port ini penting: kalau tes UDP macet, sesi itu hanya memblokir port UDP — tes TCP (throughput) tetap jalan. Dengan satu port, sesi UDP yang macet membuat server melapor `the server is busy` dan throughput ikut hilang.
-
-Profil UDP hanya dijalankan untuk **VM yang sedang dibuka** di dashboard (backend mencatat VM dari poll `/api/overview?vm=...`; halaman Security yang poll tanpa `vm` tidak mengubahnya). Jadi jitter yang tampil adalah milik VM aktif, dan angka VM lain membeku selama tabnya tidak dibuka. Packet loss tetap mengikuti probe ICMP in-VM untuk VM yang dipilih.
-
-> TCP dipilih untuk profil throughput karena lebih andal; profil UDP terpisah (dengan laju kecil & jadwal sendiri) dipakai khusus untuk jitter. Packet loss berasal dari ping probe in-VM.
+`QOS_SOURCE_MODE=vm` dan `QOS_LOCAL_PROBE=false` membuat dashboard tidak
+menjalankan probe dari laptop; `QOS_AUTO_ENABLED=false` mematikan scheduler
+laptop. Tes manual dari laptop tetap tersedia lewat `/api/iperf3/run` dan
+`/api/delay/run`.
 
 | Variabel | Default | Fungsi |
 |---|---|---|
-| `QOS_AUTO_ENABLED` | `false` | Mengaktifkan mode otomatis |
-| `QOS_AUTO_INTERVAL_SECONDS` | `5` | Interval tick |
-| `QOS_AUTO_METRICS` | `ping,iperf3` | Metrik yang dijalankan |
-| `QOS_AUTO_IPERF3_DURATION_SECONDS` | `0` (pakai `IPERF3_TEST_DURATION_SECONDS`) | Durasi tes mode otomatis |
-| `QOS_AUTO_IPERF3_BANDWIDTH` | kosong (pakai `IPERF3_BANDWIDTH`) | Bandwidth mode otomatis |
-| `QOS_AUTO_IPERF3_COOLDOWN_SECONDS` | `2` | Jeda minimal setelah tes sebelumnya |
+| `QOS_SOURCE_MODE` | `vm` | Sumber angka QoS: `vm` = probe in-VM |
+| `QOS_LOCAL_PROBE` | `false` | Jalankan probe ping/iperf3 dari laptop |
+| `QOS_AUTO_ENABLED` | `false` | Scheduler laptop otomatis (nonaktif) |
+| `QOS_HISTORY_POINTS` | `480` | Retensi histori probe in-VM (80 menit @10 dtk) |
+| `QOS_PROBE_INTERVAL_SECONDS` | `10` | Label interval probe in-VM |
 
-Label di pojok toolbar panel QoS berubah dari `Manual` menjadi `Otomatis · 5 dtk` saat mode otomatis aktif.
+Jika server iperf3 melapor `the server is busy`, restart unit di VM target:
 
-Catatan praktis:
+```bash
+sudo systemctl restart ids-iperf3-local ids-iperf3-local-udp
+```
 
-- Server iperf3 hanya melayani satu tes pada satu waktu, jadi scheduler menunggu `durasi + cooldown` sebelum tes berikutnya.
-- `IPERF3_OMIT_SECONDS=0` dipakai agar sebagian besar sampel tes ikut terhitung.
-- Windows Firewall harus mengizinkan inbound `iperf3.exe` pada semua profil jaringan:
-  ```powershell
-  New-NetFirewallRule -DisplayName "iperf3.exe inbound (all profiles)" -Direction Inbound `
-    -Program "C:\Users\eka\AppData\Local\Microsoft\WinGet\Packages\ar51an.iPerf3_Microsoft.Winget.Source_8wekyb3d8bbwe\iperf3.exe" `
-    -Action Allow -Profile Any
-  ```
-- Cepatkan atau matikan: `QOS_AUTO_INTERVAL_SECONDS`, `QOS_AUTO_METRICS=ping`, atau `QOS_AUTO_ENABLED=false`.
-- Histori QoS hanya di memori proses; restart dashboard mengosongkan seri.
+### Jalur akses: Tailscale
 
-### Jalur akses: LAN langsung
-
-Laptop dan ketiga VM berada di Wi-Fi/LAN yang sama. Dashboard mengakses LightGBM (`192.168.100.69`), random forest (`192.168.100.70`), dan fail2ban (`192.168.100.71`) langsung tanpa Tailscale atau tunnel SSH.
+Laptop dan ketiga VM tidak berada di bridge LAN yang sama. Windows memakai
+rute `192.168.1.0/24` lewat `100.100.100.100` (Tailscale subnet router di
+desktop `100.78.43.40`), sehingga dashboard tetap mengakses LightGBM
+(`192.168.1.6`), random forest (`192.168.1.7`), dan fail2ban (`192.168.1.10`)
+tanpa SSH tunnel.
 
 | Yang berubah | Detail |
 |---|---|
-| Routing laptop | Tidak ada konfigurasi khusus; pastikan satu subnet dengan VM |
+| Routing laptop | `route print 192.168.1.0` harus menunjuk `100.100.100.100`; `tailscale status` harus Direct/Relay ke desktop |
 | `.env` | Hanya `VM_HOST` / `RF_VM_HOST` / `FAIL2BAN_VM_HOST`; IP laptop tidak disimpan |
 | Firewall VM | `ufw` nonaktif; tidak ada rule yang perlu diubah |
 | Kode dashboard | Tidak ada perubahan |
-| Angka QoS | Probe in-VM tetap memakai link host-only `192.168.56.0/24` (jalur yang diproses ML), bukan jalur laptop |
+| Angka QoS | Jalur laptop→VM lewat Tailscale (bukan host-only `192.168.56.0/24`); packet loss 20–30% adalah karakter jalur ini |
 
 Jika IP VM berubah akibat DHCP, ganti satu baris di `.env` atau jalankan `scripts/set_vm_host.ps1`, lalu restart dashboard. `ufw` di VM nonaktif, jadi perubahan IP/subnet tidak memerlukan rule firewall baru.
 
@@ -903,7 +871,7 @@ Tunnel SSH dan Tailscale tidak dipakai lagi. `scripts/start_tunnel.ps1` disimpan
 | `ids-rf-api` | user | API RF read-only `:8080` |
 | `ids-lightgbm-api` | system | API LightGBM read-only `:8080` (VM lightgbm) |
 | `glances-web` | system | Glances web API `:61208` (VM lightgbm, unit di `deploy/glances-web.service`) |
-| `ids-iperf3` | user | Server iperf3 `:5201` |
+| `ids-iperf3` / `ids-iperf3-local-udp` | user/system | Server iperf3 `:5201` TCP dan `:5202` UDP (build 3.22) |
 
 Service user berada di `~/.config/systemd/user/` dan berjalan karena linger aktif. Perintah cek/restart:
 
@@ -913,7 +881,7 @@ systemctl --user restart ids-rf-api.service ids-iperf3.service
 journalctl --user -u ids-rf-api.service -n 50
 ```
 
-Setelah VM reboot, pastikan service kembali `active`. Dashboard akan terhubung lagi pada polling berikutnya; tidak ada tunnel yang perlu dipulihkan.
+Setelah VM reboot, pastikan service kembali `active`. Dashboard akan terhubung lagi pada polling berikutnya; pastikan Tailscale dan route `192.168.1.0/24` tetap aktif.
 
 > Bagian **Status Implementasi**, **Menjalankan**, **Konfigurasi**, **Arsitektur**, **Kontrak API Internal**, **Integrasi VM Random Forest**, **Autostart VM**, **Pengujian**, dan **Batasan** di bawah dipertahankan sebagai referensi rinci. Jika ada perbedaan, gunakan panduan operasional di atas sebagai acuan terbaru.
 
@@ -964,7 +932,7 @@ Dari WSL/Linux pada proyek Windows ini:
 
 ## Alat ukur di laptop (Windows)
 
-Bagian ini adalah referensi lama untuk alat ukur di laptop. Pada topologi saat ini Glances berjalan di dalam VM dan diakses langsung di `192.168.100.69:61208` / `192.168.100.70:61208`; lihat panduan di atas.
+Bagian ini adalah referensi lama untuk alat ukur di laptop. Pada topologi saat ini Glances berjalan di dalam VM dan diakses langsung di `192.168.1.6:61208` / `192.168.1.7:61208`; lihat panduan di atas.
 
 Pengukuran QoS dijalankan backend dari laptop monitoring.
 
@@ -1003,9 +971,12 @@ GLANCES_LIGHTGBM_URL=http://${VM_HOST}:61208
 GLANCES_LIGHTGBM_LABEL=lightgbm-vm
 IPERF3_ENABLED=true
 IPERF3_SERVER_HOST=${VM_HOST}
+IPERF3_PORT=5202
 IPERF3_TEST_PROTOCOL=udp
-IPERF3_BANDWIDTH=100M
+IPERF3_BANDWIDTH=2M
 PING_TARGET_HOST=${VM_HOST}
+QOS_SOURCE_MODE=vm
+QOS_LOCAL_PROBE=false
 ```
 
 ## Konfigurasi
@@ -1036,6 +1007,9 @@ Semua konfigurasi dibaca dari `.env` melalui `config.py`. Jangan commit `.env` b
 | `ATTACK_HISTORY_API_TOKEN` | kosong | Token Bearer untuk API attack history; hanya backend |
 | `ATTACK_HISTORY_EXTRA_API_URLS` | kosong | Sumber deteksi tambahan (dipisah koma), digabung dengan sumber utama |
 | `ATTACK_HISTORY_EXTRA_API_TOKENS` | kosong | Token untuk sumber tambahan, sepadan urutan dengan URL |
+| `DETECTION_LOG_API_URLS` | kosong | Sumber `/api/detections`; jika kosong diturunkan dari URL blocked LightGBM/RF |
+| `DETECTION_LOG_API_TOKENS` | kosong | Token untuk sumber detection log, sepadan urutan dengan URL |
+| `DETECTION_LOG_LIMIT` | `400` | Maksimal item dashboard Detection Log (200 per VM) |
 | `FLOW_FEATURES_API_URL` | kosong | Endpoint 17 fitur flow Random Forest |
 | `FLOW_FEATURES_API_TOKEN` | kosong | Opsional; fallback ke `ATTACK_HISTORY_API_TOKEN` |
 | `FLOW_FEATURES_*_URL` | kosong | Endpoint flow features per VM (`LIGHTGBM`, `RANDOM_FOREST`, `FAIL2BAN`) |
@@ -1045,17 +1019,17 @@ Semua konfigurasi dibaca dari `.env` melalui `config.py`. Jangan commit `.env` b
 | `QOS_HISTORY_POINTS` | `480` | Retensi titik runner QoS manual (80 menit @10 detik) |
 | `QOS_VM` | `randomforest-vm` | VM legacy bila `QOS_VMS` kosong |
 | `QOS_AUTO_ENABLED` | `false` | Scheduler otomatis menjalankan pengukuran QoS |
-| `QOS_AUTO_INTERVAL_SECONDS` | `5` | Interval tick scheduler otomatis |
+| `QOS_AUTO_INTERVAL_SECONDS` | `12` | Interval tick scheduler otomatis |
 | `QOS_AUTO_METRICS` | `ping,iperf3` | Metrik yang dijalankan otomatis |
-| `QOS_AUTO_IPERF3_DURATION_SECONDS` | `0` (pakai `IPERF3_TEST_DURATION_SECONDS`) | Durasi tes iperf3 mode otomatis |
-| `QOS_AUTO_IPERF3_BANDWIDTH` | kosong (pakai `IPERF3_BANDWIDTH`) | Bandwidth iperf3 mode otomatis |
-| `QOS_AUTO_IPERF3_COOLDOWN_SECONDS` | `2` | Jeda minimal sebelum iperf3 berikutnya |
+| `QOS_AUTO_IPERF3_DURATION_SECONDS` | `3` | Durasi tes iperf3 mode otomatis |
+| `QOS_AUTO_IPERF3_BANDWIDTH` | `1M` | Bandwidth iperf3 mode otomatis |
+| `QOS_AUTO_IPERF3_COOLDOWN_SECONDS` | `12` | Jeda minimal sebelum iperf3 berikutnya |
 | `QOS_VMS` | kosong | VM yang diukur QoS-nya (csv); contoh `lightgbm-vm,randomforest-vm,fail2ban-vm` |
-| `QOS_AUTO_IPERF3_PROTOCOL` | `tcp` | Protokol iperf3 mode otomatis (tcp lebih andal lewat relay) |
-| `QOS_AUTO_LOSS_ENABLED` | `true` | Jalankan tes UDP ringan untuk jitter (loss UDP cadangan) |
-| `QOS_AUTO_LOSS_DURATION_SECONDS` | `2` | Durasi tes jitter UDP |
-| `QOS_AUTO_LOSS_BANDWIDTH` | `1M` | Bandwidth tes jitter UDP |
-| `QOS_AUTO_LOSS_INTERVAL_SECONDS` | `10` | Interval tes jitter UDP (terpisah dari tes throughput) |
+| `QOS_AUTO_IPERF3_PROTOCOL` | `udp` | Protokol iperf3 mode otomatis (UDP untuk jalur lossy) |
+| `QOS_AUTO_LOSS_ENABLED` | `false` | Profil UDP terpisah; tidak perlu saat tes utama sudah UDP |
+| `QOS_AUTO_LOSS_DURATION_SECONDS` | `2` | Durasi tes jitter UDP (bila diaktifkan) |
+| `QOS_AUTO_LOSS_BANDWIDTH` | `1M` | Bandwidth tes jitter UDP (bila diaktifkan) |
+| `QOS_AUTO_LOSS_INTERVAL_SECONDS` | `10` | Interval tes jitter UDP (bila diaktifkan) |
 | `QOS_AUTO_LOSS_PORT` | `5202` | Port server iperf3 untuk profil UDP |
 | `QOS_SOURCE_MODE` | `vm` | Sumber angka QoS: `vm` = probe in-VM, `laptop` = probe dari laptop |
 | `QOS_LOCAL_PROBE` | `false` | Jalankan probe iperf3/ping dari laptop (hanya saat sumber = laptop) |
@@ -1064,16 +1038,17 @@ Semua konfigurasi dibaca dari `.env` melalui `config.py`. Jangan commit `.env` b
 | `RF_VM_HOST` | kosong | IP VM random forest; dipakai `${RF_VM_HOST}` pada URL sumber data VM tersebut |
 | `IPERF3_ENABLED` | `false` | Aktifkan runner iperf3 |
 | `IPERF3_BINARY` | `iperf3` | Nama/path binari iperf3 |
-| `IPERF3_SERVER_HOST`, `IPERF3_PORT` | kosong, `5201` | Host server iperf3 tujuan |
-| `IPERF3_TEST_PROTOCOL`, `IPERF3_BANDWIDTH` | `udp`, `100M` | Jitter/loss hanya dari UDP; bandwidth target UDP |
-| `IPERF3_TEST_DURATION_SECONDS`, `IPERF3_OMIT_SECONDS` | `10`, `1` | Durasi tes dan detik pemanasan yang diabaikan |
-| `IPERF3_TIMEOUT_MARGIN_SECONDS` | `30` | Batas waktu tambahan sebelum proses iperf3 dihentikan |
+| `IPERF3_SERVER_HOST`, `IPERF3_PORT` | kosong, `5202` | Host/port server iperf3 tujuan (5202 = UDP) |
+| `IPERF3_TEST_PROTOCOL`, `IPERF3_BANDWIDTH` | `udp`, `2M` | Protokol dan bandwidth tes manual |
+| `IPERF3_TEST_DURATION_SECONDS`, `IPERF3_OMIT_SECONDS` | `3`, `0` | Durasi tes dan detik pemanasan yang diabaikan |
+| `IPERF3_TIMEOUT_MARGIN_SECONDS` | `10` | Batas waktu tambahan sebelum proses iperf3 dihentikan |
 | `IPERF3_RESULT_URL` | kosong | Fallback membaca snapshot hasil iperf3 |
 | `DELAY_API_URL` | kosong | Fallback sumber delay terpisah |
-| `PING_TARGET_HOST`, `PING_COUNT` | kosong, `5` | Target dan jumlah paket ICMP |
+| `PING_TARGET_HOST`, `PING_COUNT` | kosong, `10` | Target dan jumlah paket ICMP |
 | `PING_TIMEOUT_MS` | `1000` | Timeout per balasan ICMP |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | kosong | Hanya dibaca backend |
-| `TELEGRAM_BLOCK_NOTIFY_ENABLED` | `false` | Kirim notifikasi blokir/unblock saat dashboard polling |
+| `TELEGRAM_BLOCK_NOTIFY_ENABLED` | `false` | Kirim notifikasi episode serangan saat dashboard polling |
+| `TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS` | `60` | Masa tunggu sebelum ringkasan serangan terakhir dikirim |
 
 ## Arsitektur
 
@@ -1179,6 +1154,37 @@ Flask (laptop monitoring)
 
 `status` per section: `ok`, `empty`, `error`, `unavailable`. Nilai yang tidak tersedia dikirim sebagai `null`, bukan `0`.
 
+`GET /api/detections` (session/Bearer) mengembalikan gabungan log deteksi. `limit` default `400` (maksimal 400); provider meminta maksimal 200 baris ke tiap VM, lalu memotong total sesuai `limit`.
+
+```json
+{
+  "generated_at": "2026-10-20T10:15:00Z",
+  "data_mode": "live",
+  "poll_interval_ms": 5000,
+  "limit": 400,
+  "status": "ok",
+  "source": "LightGBM + Random Forest",
+  "error": null,
+  "warnings": [],
+  "items": [
+    {
+      "id": 123,
+      "detected_at": "2026-10-20T07:20:01Z",
+      "src_ip": "192.168.56.101",
+      "dst_ip": "192.168.56.103",
+      "src_port": 55000,
+      "dst_port": 22,
+      "protocol": "6.0",
+      "prediction": "SSH-Bruteforce",
+      "attack_probability": 0.9875,
+      "confidence": 0.9875,
+      "model": "LightGBM",
+      "status": "DETECTED"
+    }
+  ]
+}
+```
+
 Pada mode live, panel **Network Flow** memakai 17 fitur input Random Forest:
 `Protocol`, `Flow Duration`, `Tot Fwd Pkts`, `Tot Bwd Pkts`, `TotLen Fwd Pkts`,
 `TotLen Bwd Pkts`, `Flow Pkts/s`, `Flow IAT Mean`, `Flow IAT Std`,
@@ -1216,7 +1222,7 @@ Bentuk `traffic` live:
 Mode demo tetap memakai bentuk lama `series` inbound/outbound agar grafik demo
 tidak berubah.
 
-`POST /api/telegram/test` mengirim alert uji. Di mode demo hasilnya disimulasikan; di mode live endpoint mengembalikan `502` jika Telegram gagal/tidak dikonfigurasi. Notifikasi blokir/unblock otomatis terpisah dari endpoint ini dan hanya dipicu polling `/api/overview` saat `TELEGRAM_BLOCK_NOTIFY_ENABLED=true`.
+`POST /api/telegram/test` mengirim alert uji. Di mode demo hasilnya disimulasikan; di mode live endpoint mengembalikan `502` jika Telegram gagal/tidak dikonfigurasi. Notifikasi episode serangan terpisah dari endpoint ini dan hanya dipicu polling `/api/overview` saat `TELEGRAM_BLOCK_NOTIFY_ENABLED=true`: blokir pertama dikirim sekali, blokir ulang dalam masa tunggu tidak dikirim, dan ringkasan terakhir dikirim setelah `TELEGRAM_NOTIFY_FINAL_GRACE_SECONDS`.
 
 `POST /api/iperf3/run` dan `POST /api/delay/run` memulai pengukuran manual di background lalu mengembalikan `202` beserta `estimated_seconds`. Keduanya memerlukan login + CSRF, dan mengembalikan `409` bila runner tidak tersedia (mode demo) atau pengukuran masih berjalan. Hasil muncul pada polling `/api/overview` berikutnya melalui `qos.test` (iperf3) dan `qos.delay_test` (ICMP).
 
@@ -1226,11 +1232,12 @@ tidak berubah.
 - `RANDOM_FOREST_BLOCKED_API_URL`: format sama dengan LightGBM; sumber `Random Forest` (Bearer `RANDOM_FOREST_API_TOKEN`).
 - `FAIL2BAN_API_URL`: list item atau `{ "items": [...] }`; field `ip`, `blocked_at`, `jail`, `status` (endpoint baru di VM Fail2Ban memakai Bearer `FAIL2BAN_API_TOKEN`).
 - `ATTACK_HISTORY_API_URL`: list item atau `{ "items": [...] }`; field `detected_at`, `source_ip`, `attack_type`, `detection`, `model`, `blocking_status`.
+- `DETECTION_LOG_API_URLS`: list item atau `{ "items": [...] }`; field `id`, `detected_at`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `protocol`, `prediction`, `attack_probability`, `confidence`, `model`, `status`.
 - `IPERF3_RESULT_URL`: `{ "timestamp", "throughput_mbps", "jitter_ms", "packet_loss_percent", "protocol" }` (fallback bila runner lokal tidak aktif).
 - `DELAY_API_URL`: `{ "timestamp", "delay_ms" }` (fallback bila `PING_TARGET_HOST` kosong).
 - `GLANCES_*_URL`: base URL Glances; backend memanggil `/api/4/quicklook` (fallback `/api/3/quicklook`) dan membaca `cpu` serta `mem`.
 
-Jika `IPERF3_ENABLED=true` dan `IPERF3_SERVER_HOST` diisi, backend menjalankan `iperf3 -c <host> -J` sendiri (UDP memakai `-u -b <bandwidth>`) sehingga `IPERF3_RESULT_URL` tidak diperlukan. Jika `PING_TARGET_HOST` diisi, delay diukur langsung via ICMP. Pada mode `QOS_SOURCE_MODE=vm`, packet loss juga diambil dari ICMP ping in-VM (fallback ke loss UDP bila ping gagal).
+Jika `IPERF3_ENABLED=true` dan `IPERF3_SERVER_HOST` diisi, backend menjalankan `iperf3 -c <host> -J` sendiri (UDP memakai `-u -b <bandwidth>`) sehingga `IPERF3_RESULT_URL` tidak diperlukan. Jika `PING_TARGET_HOST` diisi, delay diukur langsung via ICMP. Packet loss memakai ICMP ping (laptop pada `QOS_SOURCE_MODE=laptop`, probe in-VM pada `QOS_SOURCE_MODE=vm`), dengan loss UDP sebagai fallback.
 
 Semua bentuk di atas **provisional** dan harus disesuaikan dengan kontrak API tim.
 
@@ -1264,10 +1271,10 @@ IPERF3_SERVER_HOST=${RF_VM_HOST}
 PING_TARGET_HOST=${RF_VM_HOST}
 ```
 
-Server iperf3 berjalan langsung di VM agar pengukuran mencerminkan jalur LAN.
-Izinkan `5201/tcp` dan `5201/udp` hanya dari subnet monitoring. Jika VM tidak
-terjangkau (IP DHCP berubah/mati), panel RF menampilkan error/unavailable, bukan
-data demo.
+Server iperf3 berjalan langsung di VM agar pengukuran mencerminkan jalur
+laptop→VM lewat Tailscale. Izinkan `5201/tcp` dan `5202/udp` hanya dari subnet
+monitoring. Jika VM tidak terjangkau (IP DHCP berubah/mati), panel RF
+menampilkan error/unavailable, bukan data demo.
 
 Auto-unblock Random Forest memakai konfigurasi yang sama dengan LightGBM:
 
@@ -1325,4 +1332,4 @@ Cakupan saat ini: register/login/logout, proteksi route/API, CSRF, kontrak overv
 - Glances di Windows mendukung CPU/memori/disk via psutil; sensor suhu/GPU tidak tersedia.
 - Threshold baik/buruk QoS sengaja tidak diimplementasikan.
 - Histori serangan tidak dipersistenkan oleh dashboard; data dibaca dari API RF. Riwayat Telegram dan baseline notifikasi hanya ada di memori proses.
-- Notifikasi blokir/unblock hanya berjalan saat dashboard polling; tab tertutup, restart, atau periode tanpa polling tidak mengirim notifikasi susulan.
+- Notifikasi episode serangan hanya berjalan saat dashboard polling; tab tertutup, restart, atau periode tanpa polling tidak mengirim notifikasi susulan. State episode disimpan di memori, jadi restart dashboard menghilangkan episode yang sedang berjalan.

@@ -12,6 +12,23 @@ def get_csrf_token():
     return token
 
 
+def get_bearer_token():
+    header = request.headers.get("Authorization") or ""
+    prefix = "bearer "
+    if header.lower().startswith(prefix):
+        return header[len(prefix):].strip()
+    return ""
+
+
+def bearer_token_valid():
+    """True bila Authorization: Bearer cocok dengan DASHBOARD_API_TOKEN."""
+    expected = current_app.config.get("DASHBOARD_API_TOKEN") or ""
+    if not expected:
+        return False
+    token = get_bearer_token()
+    return bool(token) and compare_digest(token, expected)
+
+
 def csrf_protect():
     if not current_app.config.get("CSRF_ENABLED", True):
         return

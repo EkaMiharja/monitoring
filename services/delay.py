@@ -5,7 +5,7 @@ import subprocess
 import threading
 from collections import deque
 
-from utils import iso, utc_now
+from utils import wib_iso
 
 _AVG_PATTERNS = (
     re.compile(r"rtt\s+min/avg/max(?:/mdev)?\s*=\s*[\d.,]+/([\d.,]+)/", re.IGNORECASE),
@@ -36,6 +36,7 @@ class PingRunner:
         self.max_points = max(1, int(config.get("QOS_HISTORY_POINTS", 240) or 240))
 
         self.history = deque(maxlen=self.max_points)
+        self.loss_history = deque(maxlen=self.max_points)
         self.lock = threading.Lock()
         self._running = False
         self.meta = None
@@ -58,6 +59,10 @@ class PingRunner:
         with self.lock:
             return list(self.history)
 
+    def loss_series(self):
+        with self.lock:
+            return list(self.loss_history)
+
     def start(self):
         if not self.configured():
             return False
@@ -65,7 +70,7 @@ class PingRunner:
             if self._running:
                 return False
             self._running = True
-            self.meta = self._meta("running", iso(utc_now()))
+            self.meta = self._meta("running", wib_iso())
         threading.Thread(target=self._run_guarded, name="ping-runner", daemon=True).start()
         return True
 
@@ -77,7 +82,7 @@ class PingRunner:
                 self._running = False
 
     def run(self):
-        timestamp = iso(utc_now())
+        timestamp = wib_iso()
         if not self.target:
             self._fail("Host target delay belum dikonfigurasi (PING_TARGET_HOST).", timestamp)
             return
@@ -101,10 +106,14 @@ class PingRunner:
 
         text = f"{self._decode(result.stdout)}\n{self._decode(result.stderr)}"
         stats = self.parse(text)
+        loss = stats["loss"]
+        if loss is not None:
+            with self.lock:
+                self._append_loss(timestamp, loss)
         if stats["avg"] is None:
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             detail = lines[-1] if lines else "Tidak ada balasan ICMP."
-            self._fail(f"ICMP tidak dijawab target ({detail}).", timestamp)
+            self._fail(f"ICMP tidak dijawab target ({detail}).", timestamp, loss=loss)
             return
 
         with self.lock:
@@ -116,7 +125,7 @@ class PingRunner:
                 "delay_ms": stats["avg"],
                 "min_ms": stats["min"],
                 "max_ms": stats["max"],
-                "packet_loss_percent": stats["loss"],
+                "packet_loss_percent": loss,
                 "status": "success",
                 "timestamp": timestamp,
                 "error": None,
@@ -173,7 +182,7 @@ class PingRunner:
             self.target,
         ]
 
-    def _meta(self, status, timestamp):
+    def _meta(self, status, timestamp, loss=None):
         return {
             "method": "ICMP",
             "target": self.target or None,
@@ -181,22 +190,27 @@ class PingRunner:
             "delay_ms": None,
             "min_ms": None,
             "max_ms": None,
-            "packet_loss_percent": None,
+            "packet_loss_percent": loss,
             "status": status,
             "timestamp": timestamp,
             "error": None,
         }
 
-    def _fail(self, message, timestamp):
+    def _fail(self, message, timestamp, loss=None):
         with self.lock:
             self.error = message
-            self.meta = self._meta("failed", timestamp)
+            self.meta = self._meta("failed", timestamp, loss=loss)
             self.meta["error"] = message
 
     def _append(self, timestamp, value):
         if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
             return
         self.history.append({"t": timestamp, "value": round(float(value), 3)})
+
+    def _append_loss(self, timestamp, value):
+        if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return
+        self.loss_history.append({"t": timestamp, "value": round(float(value), 3)})
 
     @classmethod
     def _search(cls, text, patterns):

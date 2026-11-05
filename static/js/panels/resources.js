@@ -1,5 +1,5 @@
 import { createChart, destroyChart, updateChart } from "../charts.js";
-import { applyBadge, setHidden } from "../dom.js";
+import { setHidden } from "../dom.js";
 import { formatNumber, formatTime, toNumber } from "../format.js";
 import { setEmptyState, updatePanelMeta } from "../ui.js";
 
@@ -47,20 +47,6 @@ function updateHostCard(card, host) {
     const hostName = String(host.host || "unknown");
     card.dataset.host = hostName;
     card.querySelector("[data-host-name]").textContent = hostName;
-
-    const badge = card.querySelector("[data-host-status]");
-    applyBadge(badge, host.status || "unavailable");
-    const badgeText = badge?.querySelector("span:last-child");
-    if (badgeText) {
-        badgeText.textContent =
-            host.status === "ok"
-                ? "Live"
-                : host.status === "empty"
-                  ? "Kosong"
-                  : host.status === "error"
-                    ? "Error"
-                    : "Tidak tersedia";
-    }
 
     const errorNode = card.querySelector("[data-host-error]");
     if (errorNode) {
